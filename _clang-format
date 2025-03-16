@@ -1,0 +1,9 @@
+---
+BasedOnStyle: llvm  
+Cpp11BracedListStyle: false
+AlignConsecutiveDeclarations: true
+AlignConsecutiveAssignemnts: true
+BreakBeforeBraces: Allman
+
+ColumnLimit: 100
+---

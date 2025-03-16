@@ -1,0 +1,21 @@
+{
+  "name": "clang-wasm-vite",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "postinstall": "clang -o nob nob.c",
+    "dev": "concurrently 'vite' 'npm run watch:wasm'",
+    "build": "tsc && vite build",
+    "old:build:wasm": "clang --target=wasm32 -O3 -flto -nostdlib -Wl,--no-entry -Wl,--export-all -o glue/wasm/main.wasm src/main.c",
+    "build:wasm": "./nob",
+    "watch:wasm": "chokidar 'src/**/*.{c,h}' -c 'npm run build:wasm'",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "chokidar-cli": "^3.0.0",
+    "concurrently": "^9.1.2",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
+  }
+}
