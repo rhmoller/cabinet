@@ -87,7 +87,7 @@ export class Gfx {
 
   constructor(cabinet: Cabinet) {
     this.cabinet = cabinet;
-    this.canvas = createCanvas();
+    this.canvas = createCanvas(1920, 1080); 
     document.body.appendChild(this.canvas);
     this.gl = initWebGL(this.canvas);
     const gl = this.gl;

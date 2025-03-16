@@ -1,10 +1,17 @@
 # cabinet
-A small game engine primarily targeting web based games with lowpoly pixelart graphics
+
+A small game engine that compiles to WebAssembly and native code
+
+DISCLAIMER: This is an early work in progress and is not ready for production use. It is my recreational hobby project and
+might not be suitable for others.
+
+The primary goal of this engine is to generate tiny web builds that will load instantly.
+The seconday goal is to be able to generate native builds for distribution on itch and steam.
 
 ## Requirements
 
 - npm for the web builds
-- a c compiler for native builds (I use Clang)
+- Clang for WebAssembly and native builds
 - Bear for generating compile_commands.json for clangd
 - GLFW for native window management
 
@@ -24,7 +31,6 @@ Now you can run the development server which will automatically rebuild the web 
 
 ```bash
 $ npm run dev
-
 ```
 
 ## Credits

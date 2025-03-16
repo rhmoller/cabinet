@@ -9,6 +9,15 @@
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb_sprintf.h"
 
+void *memcpy(void *dest, const void *src, size_t n) {
+  char *d = (char *)dest;
+  const char *s = (const char *)src;
+  for (size_t i = 0; i < n; ++i) {
+    d[i] = s[i];
+  }
+  return dest;
+}
+
 Cabinet *cabinet;
 Gfx *gfx;
 Shader *shader;
@@ -27,6 +36,8 @@ const char *vtx_shader = "\
 #version 300 es\n\
 layout(std140) uniform Globals {\n\
     mat4 model;\n\
+    mat4 view;\n\
+    mat4 projection;\n\
 } globals;\n\
 in vec3 aPos;\n\
 in vec3 aCol;\n\
@@ -34,7 +45,7 @@ in vec2 aTexCoord;\n\
 out vec3 vCol;\n\
 out vec2 vTexCoord;\n\
 void main() {\n\
-    gl_Position = globals.model * vec4(aPos, 1);\n\
+    gl_Position = globals.projection * globals.view * globals.model * vec4(aPos, 1);\n\
     vCol = aCol;\n\
     vTexCoord = aTexCoord;\
 }\n\
@@ -56,16 +67,21 @@ const char *voxel_vtx_shader = "\
 #version 300 es\n\
 layout(std140) uniform Globals {\n\
     mat4 model;\n\
+    mat4 view;\n\
+    mat4 projection;\n\
 } globals;\n\
 in vec3 aPos;\n\
 in vec3 aCol;\n\
 in vec3 aTexCoord;\n\
+in vec3 aNormal;\n\
 out vec3 vCol;\n\
 out vec3 vTexCoord;\n\
+out vec3 vNormal;\n\
 void main() {\n\
-    gl_Position = globals.model * vec4(aPos, 1);\n\
+    gl_Position = globals.projection * globals.view * globals.model * vec4(aPos, 1);\n\
     vCol = aCol;\n\
     vTexCoord = aTexCoord;\
+    vNormal = mat3(transpose(inverse(globals.model))) * aNormal;\
 }\n\
 \0";
 
@@ -76,9 +92,20 @@ precision mediump sampler2DArray;\n\
 uniform sampler2DArray uTexture;\n\
 in vec3 vCol;\n\
 in vec3 vTexCoord;\n\
+in vec3 vNormal;\n\
 out vec4 FragColor;\n\
 void main() {\n\
-    FragColor = vec4(vCol, 1.0) * texture(uTexture, vTexCoord);\n\
+    vec3 lightDir = normalize(vec3(0.25, 1.0, 0.5));\n\
+    vec3 lightColor = vec3(1.0, 1.0, 1.0);\n\
+    float ambientStrength = 0.3;\n\
+\n\
+    vec3 ambient = ambientStrength * lightColor;\n\
+    vec3 norm = normalize(vNormal);\n\
+    float diff = max(dot(norm, lightDir), 0.0);\n\
+    vec3 diffuse = diff * lightColor;\n\
+    vec3 result = (ambient + diffuse) * vCol;\n\
+\n\
+    FragColor = vec4(result, 1.0) * texture(uTexture, vTexCoord);\n\
 }\n\
 \0";
 
@@ -130,7 +157,7 @@ float vertices[] = {
 };
 
 float text_vertices[8 * 36 * 4096];
-float voxel_vertices[8 * 36 * 1024];
+float voxel_vertices[8 * 36 * 1024 * 50];
 
 AssetHandle *baboon;
 AssetHandle *font;
@@ -138,6 +165,8 @@ AssetHandle *voxelImg;
 
 typedef struct UniformData {
     float model[16];
+    float view[16];
+    float projection[16];
 } UniformData;
 
 UniformData uniformData = {
@@ -146,7 +175,19 @@ UniformData uniformData = {
         0.0f, 1.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 1.0f, 0.0f,
         0.0f, 0.0f, 0.0f, 1.0f
-   }
+   },
+    .view = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+   },
+    .projection = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+   },
 };
 
 Uniforms *uniforms;
@@ -243,19 +284,21 @@ void init() {
         .mode = CAB_TRIANGLES
     });
 
-    int voxel_len = voxels_create(voxel_vertices, 0);
+    int voxel_len = voxels_create(voxel_vertices);
 
+    gfx_bind_shader(gfx, voxelShader);
     voxelGeometry = gfx_create_geometry(gfx, &(GeometryCfg){
         .buffers = (BufferCfg[]){
             { .data = voxel_vertices, .size = sizeof(voxel_vertices) }
         },
         .buffer_count = 1,
         .attributes = (AttributeCfg[]){
-            { .name = "aPos", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 9 * sizeof(float), .offset = 0 },
-            { .name = "aCol", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 9 * sizeof(float), .offset = 3 * sizeof(float) },
-            { .name = "aTexCoord", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 9 * sizeof(float), .offset = 6 * sizeof(float) }
+            { .name = "aPos", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 12 * sizeof(float), .offset = 0 },
+            { .name = "aCol", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 12 * sizeof(float), .offset = 3 * sizeof(float) },
+            { .name = "aTexCoord", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 12 * sizeof(float), .offset = 6 * sizeof(float) },
+            { .name = "aNormal", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 12 * sizeof(float), .offset = 9 * sizeof(float) }
         },
-        .attribute_count = 3,
+        .attribute_count = 4,
         .vertex_count = voxel_len,
         .mode = CAB_TRIANGLES
     });
@@ -273,8 +316,8 @@ float t = 0.0f;
 char text[4096];
 
 void update() {
-    mat4 view = mat4_look_at((vec3){0.0f, 0.0f, 3.0f}, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
-    mat4 projection = mat4_perspective(45.0f, 800.0f / 600.0f, 0.1f, 100.0f);
+    mat4 view = mat4_look_at((vec3){0.0f, 5.0f, 8.0f}, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
+    mat4 projection = mat4_perspective(45.0f, 1920.0f / 1080.0f, 0.1f, 100.0f);
 
     if (!loaded) {
         if (cabinet_is_loaded(cabinet, baboon) && cabinet_is_loaded(cabinet, font) && cabinet_is_loaded(cabinet, voxelImg)) {
@@ -292,13 +335,15 @@ void update() {
     gfx_clear(gfx, 0.3f, 0.1f, 0.2f, 1.0f);
     
     // 3d render spinning cube
-    mat4 model = mat4_multiply(mat4_rotation_z(t * 0.237f), mat4_rotation_x(t * 0.1f));
-    mat4 data = mat4_multiply(projection, mat4_multiply(view, model));
-    gfx_update_uniforms(gfx, uniforms, &data, sizeof(UniformData));
+    mat4 model = mat4_rotation_y(t * 0.1); //mat4_multiply(mat4_rotation_z(t * 0.237f), mat4_rotation_x(t * 0.1f));
+    memcpy(uniformData.model, &model, sizeof(mat4));
+    memcpy(uniformData.view, &view, sizeof(mat4));
+    memcpy(uniformData.projection, &projection, sizeof(mat4));
+    gfx_update_uniforms(gfx, uniforms, &uniformData, sizeof(UniformData));
 
-    int voxel_len = voxels_create(voxel_vertices, (int)t % 10 > 5 ? 2 : 0);
-    gfx_update_geometry(gfx, voxelGeometry, 0, voxel_vertices, 9 * voxel_len * sizeof(float));
-    gfx_set_vertex_count(voxelGeometry, voxel_len);
+    // int voxel_len = voxels_create(voxel_vertices);
+    // gfx_update_geometry(gfx, voxelGeometry, 0, voxel_vertices, 9 * voxel_len * sizeof(float));
+    // gfx_set_vertex_count(voxelGeometry, voxel_len);
 
     gfx_bind_shader(gfx, voxelShader);
     gfx_bind_texture(gfx, voxelTexture);
@@ -309,7 +354,7 @@ void update() {
     gfx_draw_geometry(gfx, geometry);
 
     // 2d render text
-    mat4 textModel = mat4_ortho(0.0f, 800.0f, 0.0f, 600.0f, -1.0f, 1.0f);
+    mat4 textModel = mat4_ortho(0.0f, 1920.0f, 0.0f, 1080.0f, -1.0f, 1.0f);
     gfx_update_uniforms(gfx, uniforms, &textModel, sizeof(UniformData));
 
     stbsp_sprintf(text, "Brain Monitor v2.0\nLost braincells: { %f.3 }\n\nConclusion: You look like a monkey", t);
@@ -332,7 +377,7 @@ void shutdown() {
 int main() {
     GLFWwindow *window;
     if (!glfwInit()) return -1;
-    window = glfwCreateWindow(800, 600, "Cabinet", NULL, NULL);
+    window = glfwCreateWindow(1920, 1080, "Cabinet", NULL, NULL);
     if (!window) {
         glfwTerminate();
         return -1;
@@ -342,7 +387,7 @@ int main() {
         glfwTerminate();
         return -1;
     }
-    glViewport(0, 0, 800, 600);
+    glViewport(0, 0, 1920, 1080);
     init();
     while (!glfwWindowShouldClose(window)) {
         update();
