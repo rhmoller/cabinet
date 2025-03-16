@@ -12,7 +12,7 @@ A small game engine primarily targeting web based games with lowpoly pixelart gr
 
 Before first build, you must bootstrap the C build system by running
 ```bash
-$ ./clang -o nob nob.c
+$ clang -o nob nob.c
 ```
 
 Then you must install the NPM dependencies by running
