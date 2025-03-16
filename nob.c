@@ -27,7 +27,7 @@ void init_clang_wasm(Nob_Cmd *cmd, const char *output_wasm) {
 void init_emcc_wasm(Nob_Cmd *cmd, const char *output_wasm) {
     nob_cmd_append(cmd,
         "emcc",                    // Emscripten compiler
-        "-std=c17",               // C standard
+        "-std=c23",               // C standard
         "-Wall", "-Wextra",       // Warnings
         "-O2",                    // Optimize for performance
         "-Iinclude",              // Include directory for cglm, cgltf
@@ -111,6 +111,7 @@ int main(int argc, char **argv) {
   }
 
   Nob_Cmd native_cmd = {0};
+  // TODO: only use bear if available on command line
   nob_cmd_append(&native_cmd, "bear", "--");
   init_clang_native(&native_cmd, NATIVE_BUILD_DIR "/main.exe");
   for (size_t i = 0; i < c_files.count; i++) {

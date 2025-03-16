@@ -5,13 +5,14 @@ A small game engine primarily targeting web based games with lowpoly pixelart gr
 
 - npm for the web builds
 - a c compiler for native builds (I use Clang)
+- Bear for generating compile_commands.json for clangd
 - GLFW for native window management
 
 ## Build and run
 
 Before first build, you must bootstrap the C build system by running
 ```bash
-$ ./CC -o nob nob.c
+$ ./clang -o nob nob.c
 ```
 
 Then you must install the NPM dependencies by running
@@ -23,4 +24,13 @@ Now you can run the development server which will automatically rebuild the web 
 
 ```bash
 $ npm run dev
+
 ```
+
+## Credits
+
+- [nob](https://github.com/tsoding/nob.h) the "no build" build system by @tsoding
+- [GLFW](https://www.glfw.org/) for window management
+- [stb](https://github.com/nothings/stb) for image loading and sprintf implementation
+- [Clang](https://clang.llvm.org/) for compiling the C code to native and WebAssembly
+- [Bear](https://github.com/rizsotto/Bear) for generating compile_commands.json
