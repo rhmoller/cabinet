@@ -34,3 +34,4 @@ $ npm run dev
 - [stb](https://github.com/nothings/stb) for image loading and sprintf implementation
 - [Clang](https://clang.llvm.org/) for compiling the C code to native and WebAssembly
 - [Bear](https://github.com/rizsotto/Bear) for generating compile_commands.json
+- [Vincent](https://github.com/DavidDiPaola/font_vincent) fixed-width 8x8 ASCII font by Quinn Evans
