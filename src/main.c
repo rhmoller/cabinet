@@ -1,22 +1,17 @@
+#include "shaders.h"
+#include "shapes.h"
 #ifndef __wasm__
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #endif // __wasm__
+
 #include "cabinet.h"
 #include "cmath.h"
 #include "voxels.h"
+#include "base.h"
 
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb_sprintf.h"
-
-void *memcpy(void *dest, const void *src, size_t n) {
-  char *d = (char *)dest;
-  const char *s = (const char *)src;
-  for (size_t i = 0; i < n; ++i) {
-    d[i] = s[i];
-  }
-  return dest;
-}
 
 Cabinet *cabinet;
 Gfx *gfx;
@@ -32,132 +27,8 @@ Texture *fontTexture;
 Geometry *voxelGeometry;
 Texture *voxelTexture;
 
-const char *vtx_shader = "\
-#version 300 es\n\
-layout(std140) uniform Globals {\n\
-    mat4 model;\n\
-    mat4 view;\n\
-    mat4 projection;\n\
-} globals;\n\
-in vec3 aPos;\n\
-in vec3 aCol;\n\
-in vec2 aTexCoord;\n\
-out vec3 vCol;\n\
-out vec2 vTexCoord;\n\
-void main() {\n\
-    gl_Position = globals.projection * globals.view * globals.model * vec4(aPos, 1);\n\
-    vCol = aCol;\n\
-    vTexCoord = aTexCoord;\
-}\n\
-\0";
-
-const char *frag_shader = "\
-#version 300 es\n\
-uniform sampler2D uTexture;\n\
-precision mediump float;\n\
-in vec3 vCol;\n\
-in vec2 vTexCoord;\n\
-out vec4 FragColor;\n\
-void main() {\n\
-    FragColor = vec4(vCol, 1.0) * texture(uTexture, vTexCoord);\n\
-}\n\
-\0";
-
-const char *voxel_vtx_shader = "\
-#version 300 es\n\
-layout(std140) uniform Globals {\n\
-    mat4 model;\n\
-    mat4 view;\n\
-    mat4 projection;\n\
-} globals;\n\
-in vec3 aPos;\n\
-in vec3 aCol;\n\
-in vec3 aTexCoord;\n\
-in vec3 aNormal;\n\
-out vec3 vCol;\n\
-out vec3 vTexCoord;\n\
-out vec3 vNormal;\n\
-void main() {\n\
-    gl_Position = globals.projection * globals.view * globals.model * vec4(aPos, 1);\n\
-    vCol = aCol;\n\
-    vTexCoord = aTexCoord;\
-    vNormal = mat3(transpose(inverse(globals.model))) * aNormal;\
-}\n\
-\0";
-
-const char *voxel_frag_shader = "\
-#version 300 es\n\
-precision mediump float;\n\
-precision mediump sampler2DArray;\n\
-uniform sampler2DArray uTexture;\n\
-in vec3 vCol;\n\
-in vec3 vTexCoord;\n\
-in vec3 vNormal;\n\
-out vec4 FragColor;\n\
-void main() {\n\
-    vec3 lightDir = normalize(vec3(0.25, 1.0, 0.5));\n\
-    vec3 lightColor = vec3(1.0, 1.0, 1.0);\n\
-    float ambientStrength = 0.3;\n\
-\n\
-    vec3 ambient = ambientStrength * lightColor;\n\
-    vec3 norm = normalize(vNormal);\n\
-    float diff = max(dot(norm, lightDir), 0.0);\n\
-    vec3 diffuse = diff * lightColor;\n\
-    vec3 result = (ambient + diffuse) * vCol;\n\
-\n\
-    FragColor = vec4(result, 1.0) * texture(uTexture, vTexCoord);\n\
-}\n\
-\0";
-
-
-// vertices for a cube with rgb colors and uv coordinates
-float vertices[] = {
-    // Positions          // Colors           // UVs
-    -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,
-     0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
-     0.5f,  0.5f, -0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,
-     0.5f,  0.5f, -0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,
-    -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 0.0f,  0.0f, 1.0f,
-    -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,
-
-    -0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,
-     0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
-     0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,
-     0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,
-    -0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f,  0.0f, 1.0f,
-    -0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,
-
-    -0.5f,  0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 0.0f,
-    -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f,
-    -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 1.0f,  0.0f, 1.0f,
-    -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 1.0f,  0.0f, 1.0f,
-    -0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f,
-    -0.5f,  0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 0.0f,
-
-     0.5f,  0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 0.0f,
-     0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f,
-     0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 1.0f,  0.0f, 1.0f,
-     0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 1.0f,  0.0f, 1.0f,
-     0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f,
-     0.5f,  0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 0.0f,
-
-    -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 1.0f,
-     0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f,
-     0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f,
-     0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f,
-    -0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f,
-    -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 1.0f,
-
-    -0.5f,  0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 1.0f,
-     0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f,
-     0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f,
-     0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f,
-    -0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f,
-    -0.5f,  0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 1.0f
-};
-
-float text_vertices[8 * 36 * 4096];
 float voxel_vertices[8 * 36 * 1024 * 50];
+float text_vertices[8 * 36 * 4096];
 
 AssetHandle *baboon;
 AssetHandle *font;
@@ -192,60 +63,6 @@ UniformData uniformData = {
 
 Uniforms *uniforms;
 
-void set_vertex(float *vertices, int idx, float x, float y, float z, float r, float g, float b, float u, float v) {
-    vertices[idx * 8 + 0] = x;
-    vertices[idx * 8 + 1] = y;
-    vertices[idx * 8 + 2] = z;
-    vertices[idx * 8 + 3] = r;
-    vertices[idx * 8 + 4] = g;
-    vertices[idx * 8 + 5] = b;
-    vertices[idx * 8 + 6] = u;
-    vertices[idx * 8 + 7] = v;
-}
-
-int write_text(float *vertices, char *text, float xStart, float yStart) {
-    int idx = 0;
-    char c;
-
-    float x = xStart;
-    float y = 600.0f - yStart;
-    float nChars = 128.0f;
-    float tw = 1.0f; // width of one character in texture coordinates
-    float th = 1.0f / nChars; // height of one character in texture coordinates
-    float sz = 16.0f; // character size on screen in pixels
-
-    int count = 0;
-
-    while ((c = text[idx]) != 0) {
-        int ascii = (int)c;
-        if (ascii == 10 || ascii == 13) {
-            x = xStart;
-            y -= sz;
-            idx++;
-            count++;
-            continue;
-        }
-        int row = ascii;
-        int col = 0;
-        float u = (float)col / 1.0f;
-        float v = (float)row / nChars;
-
-        set_vertex(vertices, 0 + idx * 6, x - 0.5f * sz, y + 0.5f * sz, 0.0f, 1.0f, 1.0f, 1.0f, u, v);
-        set_vertex(vertices, 1 + idx * 6, x + 0.5f * sz, y + 0.5f * sz, 0.0f, 1.0f, 1.0f, 1.0f, u + tw, v);
-        set_vertex(vertices, 2 + idx * 6, x + 0.5f * sz, y - 0.5f * sz, 0.0f, 1.0f, 1.0f, 1.0f, u + tw, v + th);
-
-        set_vertex(vertices, 3 + idx * 6, x + 0.5f * sz, y - 0.5f * sz, 0.0f, 1.0f, 1.0f, 1.0f, u + tw, v + th);
-        set_vertex(vertices, 4 + idx * 6, x - 0.5f * sz, y - 0.5f * sz, 0.0f, 1.0f, 1.0f, 1.0f, u, v + th);
-        set_vertex(vertices, 5 + idx * 6, x - 0.5f * sz, y + 0.5f * sz, 0.0f, 1.0f, 1.0f, 1.0f, u, v);
-
-        x += sz;
-        idx++;
-        count++;
-   }
-
-   return count;
-}
-
 mat4 identity;
 
 void init() {
@@ -254,42 +71,14 @@ void init() {
     cabinet = cabinet_create();
     gfx = gfx_create(cabinet);
 
-    voxelShader = gfx_create_shader(gfx, voxel_vtx_shader, voxel_frag_shader);
-    shader = gfx_create_shader(gfx, vtx_shader, frag_shader);
+    voxelShader = createVoxelShader(gfx);
+    shader = createStandardShader(gfx);
 
     gfx_bind_shader(gfx, shader);
-    geometry = gfx_create_geometry(gfx, &(GeometryCfg){
-        .buffers = (BufferCfg[]){
-            { .data = vertices, .size = sizeof(vertices) }
-        },
-        .buffer_count = 1,
-        .attributes = (AttributeCfg[]){
-            { .name = "aPos", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 8 * sizeof(float), .offset = 0 },
-            { .name = "aCol", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 8 * sizeof(float), .offset = 3 * sizeof(float) },
-            { .name = "aTexCoord", .buffer = 0, .size = 2, .type = CAB_FLOAT, .stride = 8 * sizeof(float), .offset = 6 * sizeof(float) }
-        },
-        .attribute_count = 3,
-        .vertex_count = 36,
-        .mode = CAB_TRIANGLES
-    });
+    geometry = createCubeGeometry(gfx);
 
     int text_len = write_text(text_vertices, "b", 300, 32);
-
-    textGeometry = gfx_create_geometry(gfx, &(GeometryCfg){
-        .buffers = (BufferCfg[]){
-            { .data = text_vertices, .size = sizeof(text_vertices) }
-        },
-        .buffer_count = 1,
-        .attributes = (AttributeCfg[]){
-            { .name = "aPos", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 8 * sizeof(float), .offset = 0 },
-            { .name = "aCol", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 8 * sizeof(float), .offset = 3 * sizeof(float) },
-            { .name = "aTexCoord", .buffer = 0, .size = 2, .type = CAB_FLOAT, .stride = 8 * sizeof(float), .offset = 6 * sizeof(float) }
-        },
-        .attribute_count = 3,
-        .vertex_count = 6 * text_len,
-        .mode = CAB_TRIANGLES
-    });
-
+    textGeometry = create_text_geometry(gfx, text_vertices, text_len);
     int voxel_len = voxels_create(voxel_vertices);
 
     gfx_bind_shader(gfx, voxelShader);
