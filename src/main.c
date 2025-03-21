@@ -246,11 +246,17 @@ int write_text(float *vertices, char *text, float xStart, float yStart) {
    return count;
 }
 
+mat4 identity;
+
 void init() {
+    mat4_to_identity(&identity);
+
     cabinet = cabinet_create();
     gfx = gfx_create(cabinet);
+
     voxelShader = gfx_create_shader(gfx, voxel_vtx_shader, voxel_frag_shader);
     shader = gfx_create_shader(gfx, vtx_shader, frag_shader);
+
     gfx_bind_shader(gfx, shader);
     geometry = gfx_create_geometry(gfx, &(GeometryCfg){
         .buffers = (BufferCfg[]){
@@ -302,8 +308,9 @@ void init() {
         .vertex_count = voxel_len,
         .mode = CAB_TRIANGLES
     });
-    
+   
     uniforms = gfx_create_uniforms(gfx, "Globals", sizeof(UniformData));
+
     font = cabinet_load_image(cabinet, "vincent.png");
     baboon = cabinet_load_image(cabinet, "baboon.png");
     voxelImg = cabinet_load_image(cabinet, "blocks-array-16.png");
@@ -335,15 +342,17 @@ void update() {
     gfx_clear(gfx, 0.3f, 0.1f, 0.2f, 1.0f);
     
     // 3d render spinning cube
+
     mat4 model = mat4_rotation_y(t * 0.1); //mat4_multiply(mat4_rotation_z(t * 0.237f), mat4_rotation_x(t * 0.1f));
     memcpy(uniformData.model, &model, sizeof(mat4));
     memcpy(uniformData.view, &view, sizeof(mat4));
     memcpy(uniformData.projection, &projection, sizeof(mat4));
+    gfx_bind_shader(gfx, shader);
     gfx_update_uniforms(gfx, uniforms, &uniformData, sizeof(UniformData));
 
-    // int voxel_len = voxels_create(voxel_vertices);
-    // gfx_update_geometry(gfx, voxelGeometry, 0, voxel_vertices, 9 * voxel_len * sizeof(float));
-    // gfx_set_vertex_count(voxelGeometry, voxel_len);
+    int voxel_len = voxels_create(voxel_vertices);
+    gfx_update_geometry(gfx, voxelGeometry, 0, voxel_vertices, 9 * voxel_len * sizeof(float));
+    gfx_set_vertex_count(voxelGeometry, voxel_len);
 
     gfx_bind_shader(gfx, voxelShader);
     gfx_bind_texture(gfx, voxelTexture);
@@ -355,9 +364,13 @@ void update() {
 
     // 2d render text
     mat4 textModel = mat4_ortho(0.0f, 1920.0f, 0.0f, 1080.0f, -1.0f, 1.0f);
-    gfx_update_uniforms(gfx, uniforms, &textModel, sizeof(UniformData));
+    memcpy(uniformData.model, &identity, sizeof(mat4));
+    memcpy(uniformData.view, &identity, sizeof(mat4));
+    memcpy(uniformData.projection, &textModel, sizeof(mat4));
+    gfx_bind_shader(gfx, shader);
+    gfx_update_uniforms(gfx, uniforms, &uniformData, sizeof(UniformData));
 
-    stbsp_sprintf(text, "Brain Monitor v2.0\nLost braincells: { %f.3 }\n\nConclusion: You look like a monkey", t);
+    stbsp_sprintf(text, "Brain Monitor v2.0\nLost braincells: { %f }\n\nConclusion: You look like a monkey", t);
     int text_len = write_text(text_vertices, text, 32, 32);
     gfx_update_geometry(gfx, textGeometry, 0, text_vertices, 6 * text_len * 8 * sizeof(float));
     gfx_set_vertex_count(textGeometry, 6 * text_len);
