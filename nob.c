@@ -39,6 +39,29 @@ void init_emcc_wasm(Nob_Cmd *cmd, const char *output_wasm) {
     );
 }
 
+
+// emcc src/tiny.c -o cube.js -Os -s WASM=1 -s ALLOW_MEMORY_GROWTH=0 -s MINIMAL_RUNTIME=0 -s GL_UNSAFE_OPTS=1 -s ENVIRONMENT=web -s USE_GLFW=0 -s TOTAL_MEMORY=16MB -s USE_WEBGL2 -s EXIT_RUNTIME=0
+void init_minimal_emcc(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "emcc",                    // Emscripten compiler
+        "src/tiny.c",
+        "-o", "tiny.js",
+        "-Os",                    // Optimize for size
+        "-s", "WASM=1",               // Output WebAssembly,
+        "-s", "ALLOW_MEMORY_GROWTH=0", // Allow memory growth
+        "-s", "MINIMAL_RUNTIME=0",     // Minimal runtime
+        "-s", "GL_UNSAFE_OPTS=1",        // Unsafe GL options
+        "-s", "ENVIRONMENT=web",        // Web environment
+        "-s", "USE_WEBGL2=1",         // Use WebGL 2
+        "-s", "USE_GLFW=0",         // Disable GLFW
+        "-s", "FILESYSTEM=0",         // Disable file system
+        "-s", "ASSERTIONS=0",         // Disable assertions
+                   // ass
+        "-s", "TOTAL_MEMORY=16MB", // Total memory
+    );
+}
+
+
 void init_clang_native(Nob_Cmd *cmd, const char *output_exe) {
     nob_cmd_append(cmd,
         "clang",                  // Clang compiler
@@ -87,8 +110,15 @@ bool collect_c_files(Nob_File_Paths *c_files, Nob_File_Paths *h_files) {
 
 
 int main(int argc, char **argv) {
-  NOB_GO_REBUILD_URSELF(argc, argv);
+    NOB_GO_REBUILD_URSELF(argc, argv);
 
+    Nob_Cmd cmd = {0};
+    init_minimal_emcc(&cmd);
+
+    nob_cmd_run_sync_and_reset(&cmd);
+
+
+/*
   Nob_File_Paths c_files = {0};
   Nob_File_Paths h_files = {0};
   if (!collect_c_files(&c_files, &h_files)) {
@@ -129,6 +159,6 @@ int main(int argc, char **argv) {
 
   nob_da_free(c_files);
   nob_da_free(h_files);
-
+*/
   return 0;
 }
