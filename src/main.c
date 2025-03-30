@@ -1,203 +1,171 @@
-#include "shaders.h"
-#include "shapes.h"
-#ifndef __wasm__
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
-#endif // __wasm__
+#define SOKOL_IMPL
+#include "sokol_app.h"
+#include "sokol_gfx.h"
+#include "sokol_glue.h"
+#include "sokol_log.h"
+#include "sokol_debugtext.h"
 
-#include "cabinet.h"
 #include "cmath.h"
-#include "voxels.h"
-#include "base.h"
+#include "cube.glsl.h"
 
-#define STB_SPRINTF_IMPLEMENTATION
-#include "stb_sprintf.h"
+static struct {
+    float rx;
+    float ry;
+    sg_pipeline pip;
+    sg_bindings bind;
+    sg_pass_action pass_action;
+} state;
 
-Cabinet *cabinet;
-Gfx *gfx;
-Shader *shader;
-Shader *voxelShader;
-
-Geometry *geometry;
-Texture *texture;
-
-Geometry *textGeometry;
-Texture *fontTexture;
-
-Geometry *voxelGeometry;
-Texture *voxelTexture;
-
-float voxel_vertices[8 * 36 * 1024 * 50];
-float text_vertices[8 * 36 * 4096];
-
-AssetHandle *baboon;
-AssetHandle *font;
-AssetHandle *voxelImg;
-
-typedef struct UniformData {
-    float model[16];
-    float view[16];
-    float projection[16];
-} UniformData;
-
-UniformData uniformData = {
-    .model = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f
-   },
-    .view = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f
-   },
-    .projection = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f
-   },
-};
-
-Uniforms *uniforms;
-
-mat4 identity;
+static void printf_wrapper(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    sdtx_vprintf(fmt, args);
+    va_end(args);
+}
 
 void init() {
-    mat4_to_identity(&identity);
-
-    cabinet = cabinet_create();
-    gfx = gfx_create(cabinet);
-
-    voxelShader = createVoxelShader(gfx);
-    shader = createStandardShader(gfx);
-
-    gfx_bind_shader(gfx, shader);
-    geometry = createCubeGeometry(gfx);
-
-    int text_len = write_text(text_vertices, "b", 300, 32);
-    textGeometry = create_text_geometry(gfx, text_vertices, text_len);
-    int voxel_len = voxels_create(voxel_vertices);
-
-    gfx_bind_shader(gfx, voxelShader);
-    voxelGeometry = gfx_create_geometry(gfx, &(GeometryCfg){
-        .buffers = (BufferCfg[]){
-            { .data = voxel_vertices, .size = sizeof(voxel_vertices) }
-        },
-        .buffer_count = 1,
-        .attributes = (AttributeCfg[]){
-            { .name = "aPos", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 12 * sizeof(float), .offset = 0 },
-            { .name = "aCol", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 12 * sizeof(float), .offset = 3 * sizeof(float) },
-            { .name = "aTexCoord", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 12 * sizeof(float), .offset = 6 * sizeof(float) },
-            { .name = "aNormal", .buffer = 0, .size = 3, .type = CAB_FLOAT, .stride = 12 * sizeof(float), .offset = 9 * sizeof(float) }
-        },
-        .attribute_count = 4,
-        .vertex_count = voxel_len,
-        .mode = CAB_TRIANGLES
+    sg_setup(&(sg_desc) {
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
     });
-   
-    uniforms = gfx_create_uniforms(gfx, "Globals", sizeof(UniformData));
 
-    font = cabinet_load_image(cabinet, "vincent.png");
-    baboon = cabinet_load_image(cabinet, "baboon.png");
-    voxelImg = cabinet_load_image(cabinet, "blocks-array-16.png");
+    sdtx_setup(&(sdtx_desc_t) {
+        .fonts = {
+            [0] = sdtx_font_oric(),
+        },
+        .logger.func = slog_func,
+    });
+
+    float vertices[] = {
+        -1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+         1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+         1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+        -1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+
+        -1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+         1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+         1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+        -1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+
+        -1.0, -1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
+        -1.0,  1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
+        -1.0,  1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
+        -1.0, -1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
+
+        1.0, -1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
+        1.0,  1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
+        1.0,  1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
+        1.0, -1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
+
+        -1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
+        -1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
+         1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
+         1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
+
+        -1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0,
+        -1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
+         1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
+         1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0
+    };
+    state.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
+        .data = SG_RANGE(vertices),
+        .label = "cube-vertices"
+    });
+
+    uint16_t indices[] = {
+        0, 1, 2,  0, 2, 3,
+        6, 5, 4,  7, 6, 4,
+        8, 9, 10,  8, 10, 11,
+        14, 13, 12,  15, 14, 12,
+        16, 17, 18,  16, 18, 19,
+        22, 21, 20,  23, 22, 20
+    };
+    state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
+        .data = SG_RANGE(indices),
+        .type = SG_BUFFERTYPE_INDEXBUFFER,
+        .label = "cube-indices"
+    });
+
+    sg_shader shd = sg_make_shader(cube_shader_desc(sg_query_backend()));
+
+    state.pip = sg_make_pipeline(&(sg_pipeline_desc) {
+        .shader = shd,
+        .layout = {
+            .buffers[0].stride = 28,
+            .attrs = {
+                [ATTR_cube_a_pos].format = SG_VERTEXFORMAT_FLOAT3,
+                [ATTR_cube_a_color].format = SG_VERTEXFORMAT_FLOAT4,
+            },
+        },
+        .index_type = SG_INDEXTYPE_UINT16,
+        .cull_mode = SG_CULLMODE_BACK,
+        .depth = {
+            .write_enabled = true,
+            .compare = SG_COMPAREFUNC_LESS_EQUAL,
+        },
+        .primitive_type = SG_PRIMITIVETYPE_TRIANGLES,
+        .label = "cube-pipeline",
+    });
+
+    state.pass_action = (sg_pass_action) {
+        .colors[0] = {
+            .load_action = SG_LOADACTION_CLEAR,
+            .clear_value = {0.0f, 0.0f, 0.0f, 1.0f},
+        },
+    };
 }
-
-bool loaded = false;
-
-float t = 0.0f;
-
-char text[4096];
 
 void update() {
-    mat4 view = mat4_look_at((vec3){0.0f, 5.0f, 8.0f}, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
-    mat4 projection = mat4_perspective(45.0f, 1920.0f / 1080.0f, 0.1f, 100.0f);
+    uint32_t frame_count = sapp_frame_count();
+    double frame_time = sapp_frame_duration() * 1000.0; 
+    vs_params_t vs_params;
+    const float w = sapp_widthf();
+    const float h = sapp_heightf();
+    const float t = (float)sapp_frame_duration();
+    state.rx += 1.0f * t; state.ry += 2.0f * t;
+    mat4 proj = mat4_perspective(60.0f, w / h, 0.1f, 10.0f);
+    mat4 view = mat4_look_at((vec3){0.0f, 0.0f, 3.0f}, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
+    mat4 model = mat4_rotate_y(mat4_rotate_x(mat4_create(), state.rx), state.ry);
+    vs_params.mvp = mat4_multiply(mat4_multiply(proj, view), model);
 
-    if (!loaded) {
-        if (cabinet_is_loaded(cabinet, baboon) && cabinet_is_loaded(cabinet, font) && cabinet_is_loaded(cabinet, voxelImg)) {
-            loaded = true;
-            log_info(cabinet, "Baboon and vincent loaded");
-            texture = gfx_create_texture(gfx, baboon);
-            fontTexture = gfx_create_texture(gfx, font);
-            voxelTexture = gfx_create_texture_array(gfx, voxelImg, 4);
-            log_info(cabinet, "Textures created");
-        } else {
-            log_info(cabinet, "Baboon or vincent not loaded");
-        }
-    }
+    sdtx_canvas(sapp_width() / 4.0f, sapp_height() / 4.0f);
+    sdtx_origin(5.0f, 5.0f);
+    sdtx_font(0);
+    sdtx_color1i(0xFFFFFFFF);
+    sdtx_printf("Frame: %u\n", frame_count);
 
-    gfx_clear(gfx, 0.3f, 0.1f, 0.2f, 1.0f);
-    
-    // 3d render spinning cube
+    float g = state.pass_action.colors[0].clear_value.g + 0.01f;
+    state.pass_action.colors[0].clear_value.g = g > 1.0f ? 0.0f : g;
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
 
-    mat4 model = mat4_rotation_y(t * 0.1); //mat4_multiply(mat4_rotation_z(t * 0.237f), mat4_rotation_x(t * 0.1f));
-    memcpy(uniformData.model, &model, sizeof(mat4));
-    memcpy(uniformData.view, &view, sizeof(mat4));
-    memcpy(uniformData.projection, &projection, sizeof(mat4));
-    gfx_bind_shader(gfx, shader);
-    gfx_update_uniforms(gfx, uniforms, &uniformData, sizeof(UniformData));
+    sg_apply_pipeline(state.pip);
+    sg_apply_bindings(&state.bind);
+    sg_apply_uniforms(UB_vs_params, &SG_RANGE(vs_params));
+    sg_draw(0, 36, 1);
 
-    int voxel_len = voxels_create(voxel_vertices);
-    gfx_update_geometry(gfx, voxelGeometry, 0, voxel_vertices, 9 * voxel_len * sizeof(float));
-    gfx_set_vertex_count(voxelGeometry, voxel_len);
+    sdtx_draw();
 
-    gfx_bind_shader(gfx, voxelShader);
-    gfx_bind_texture(gfx, voxelTexture);
-    gfx_draw_geometry(gfx, voxelGeometry);
-
-    gfx_bind_shader(gfx, shader);
-    gfx_bind_texture(gfx, texture);
-    gfx_draw_geometry(gfx, geometry);
-
-    // 2d render text
-    mat4 textModel = mat4_ortho(0.0f, 1920.0f, 0.0f, 1080.0f, -1.0f, 1.0f);
-    memcpy(uniformData.model, &identity, sizeof(mat4));
-    memcpy(uniformData.view, &identity, sizeof(mat4));
-    memcpy(uniformData.projection, &textModel, sizeof(mat4));
-    gfx_bind_shader(gfx, shader);
-    gfx_update_uniforms(gfx, uniforms, &uniformData, sizeof(UniformData));
-
-    stbsp_sprintf(text, "Brain Monitor v2.0\nLost braincells: { %f }\n\nConclusion: You look like a monkey", t);
-    int text_len = write_text(text_vertices, text, 32, 32);
-    gfx_update_geometry(gfx, textGeometry, 0, text_vertices, 6 * text_len * 8 * sizeof(float));
-    gfx_set_vertex_count(textGeometry, 6 * text_len);
-
-    gfx_bind_texture(gfx, fontTexture);
-    gfx_draw_geometry(gfx, textGeometry);
-
-    t += 0.11111f;
+    sg_end_pass();
+    sg_commit();
 }
 
-void shutdown() {
-    gfx_destroy(gfx);
-    cabinet_destroy(cabinet);
+void cleanup() {
+    sg_shutdown();
 }
 
-#ifndef __wasm__
-int main() {
-    GLFWwindow *window;
-    if (!glfwInit()) return -1;
-    window = glfwCreateWindow(1920, 1080, "Cabinet", NULL, NULL);
-    if (!window) {
-        glfwTerminate();
-        return -1;
-    }
-    glfwMakeContextCurrent(window);
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        glfwTerminate();
-        return -1;
-    }
-    glViewport(0, 0, 1920, 1080);
-    init();
-    while (!glfwWindowShouldClose(window)) {
-        update();
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
-    shutdown();
-    glfwTerminate();
-    return 0;
+void handle_event(const sapp_event* event) {
+    // todo: handle events
 }
-#endif // __wasm__
+
+sapp_desc sokol_main(int argc, char* argv[]) {
+    return (sapp_desc) {
+        .init_cb = init,
+        .frame_cb = update,
+        .cleanup_cb = cleanup,
+        .event_cb = handle_event,
+        .width = 1920 / 4,
+        .height = 1080 / 4,
+        .window_title = "Sokol App",
+        .logger.func = slog_func,
+    };
+}

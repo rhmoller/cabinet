@@ -1,7 +1,7 @@
 #ifndef SRC_MATH_H
 #define SRC_MATH_H
+#include <math.h>
 
-#include "cabinet.h"
 typedef struct {
   float x, y, z;
 } vec3;
@@ -37,7 +37,7 @@ static inline vec3 vec3_cross(vec3 a, vec3 b) {
 }
 
 // Function to compute the length of a vec3
-static inline float vec3_length(vec3 v) { return cab_sqrt(vec3_dot(v, v)); }
+static inline float vec3_length(vec3 v) { return sqrt(vec3_dot(v, v)); }
 
 // Function to normalize a vec3
 static inline vec3 vec3_normalize(vec3 v) {
@@ -80,7 +80,7 @@ static inline vec4 vec4_cross(vec4 a, vec4 b) {
 }
 
 // Function to compute the length of a vec4
-static inline float vec4_length(vec4 v) { return cab_sqrt(vec4_dot(v, v)); }
+static inline float vec4_length(vec4 v) { return sqrt(vec4_dot(v, v)); }
 
 // Function to normalize a vec4
 static inline vec4 vec4_normalize(vec4 v) {
@@ -160,8 +160,8 @@ static inline mat4 mat4_transpose(mat4 m) {
 
 // Function to create a rotation matrix around the x-axis
 static inline void mat4_to_rotation_x(mat4 *out, float angle) {
-  float c = cab_cos(angle);
-  float s = cab_sin(angle);
+  float c = cos(angle);
+  float s = sin(angle);
   mat4_to_identity(out);
   out->elements[1][1] = c;
   out->elements[1][2] = -s;
@@ -178,8 +178,8 @@ static inline mat4 mat4_rotation_x(float angle) {
 
 // Function to create a rotation matrix around the y-axis
 static inline void mat4_to_rotation_y(mat4 *out, float angle) {
-  float c = cab_cos(angle);
-  float s = cab_sin(angle);
+  float c = cos(angle);
+  float s = sin(angle);
   mat4_to_identity(out);
   out->elements[0][0] = c;
   out->elements[0][2] = s;
@@ -197,8 +197,8 @@ static inline mat4 mat4_rotation_y(float angle) {
 
 // Function to create a rotation matrix around the z-axis
 static inline void mat4_to_rotation_z(mat4 *out, float angle) {
-  float c = cab_cos(angle);
-  float s = cab_sin(angle);
+  float c = cos(angle);
+  float s = sin(angle);
   mat4_to_identity(out);
   out->elements[0][0] = c;
   out->elements[0][1] = -s;
@@ -211,6 +211,16 @@ static inline mat4 mat4_rotation_z(float angle) {
   mat4 result = mat4_create();
   mat4_to_rotation_z(&result, angle);
   return result;
+}
+
+static inline mat4 mat4_rotate_x(mat4 m, float angle) {
+  mat4 rotation = mat4_rotation_x(angle);
+  return mat4_multiply(m, rotation);
+}
+
+static inline mat4 mat4_rotate_y(mat4 m, float angle) {
+  mat4 rotation = mat4_rotation_y(angle);
+  return mat4_multiply(m, rotation);
 }
 
 // Function to create a look-at matrix
@@ -242,7 +252,7 @@ static inline mat4 mat4_look_at(vec3 eye, vec3 center, vec3 up) {
 
 // Function to create a perspective matrix
 static inline void mat4_to_perspective(mat4 *out, float fov, float aspect, float near, float far) {
-  float f = 1.0f / cab_tan(fov / 2.0f);
+  float f = 1.0f / tan(fov / 2.0f);
   mat4_to_identity(out);
   out->elements[0][0] = f / aspect;
   out->elements[1][1] = f;

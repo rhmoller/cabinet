@@ -44,7 +44,7 @@ void init_emcc_wasm(Nob_Cmd *cmd, const char *output_wasm) {
 void init_minimal_emcc(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "emcc",                    // Emscripten compiler
-        "src/tiny.c",
+        "-std=c23",               // C standard
         "-o", "tiny.js",
         "-Os",                    // Optimize for size
         "-s", "WASM=1",               // Output WebAssembly,
@@ -53,11 +53,14 @@ void init_minimal_emcc(Nob_Cmd *cmd) {
         "-s", "GL_UNSAFE_OPTS=1",        // Unsafe GL options
         "-s", "ENVIRONMENT=web",        // Web environment
         "-s", "USE_WEBGL2=1",         // Use WebGL 2
+        "-s", "MIN_WEBGL_VERSION=2", // Minimum WebGL version
+        "-s", "MAX_WEBGL_VERSION=2", // Maximum WebGL version
         "-s", "USE_GLFW=0",         // Disable GLFW
         "-s", "FILESYSTEM=0",         // Disable file system
         "-s", "ASSERTIONS=0",         // Disable assertions
-                   // ass
         "-s", "TOTAL_MEMORY=16MB", // Total memory
+        "-D", "SOKOL_GLES3", // Use GLES3
+        "src/main.c",
     );
 }
 
@@ -113,6 +116,7 @@ int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
     Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, "bear", "--");
     init_minimal_emcc(&cmd);
 
     nob_cmd_run_sync_and_reset(&cmd);
