@@ -1,12 +1,16 @@
 #define SOKOL_IMPL
+#define STB_IMAGE_IMPLEMENTATION
+
 #include "sokol_app.h"
+#include "sokol_fetch.h"
 #include "sokol_gfx.h"
 #include "sokol_glue.h"
 #include "sokol_log.h"
 #include "sokol_debugtext.h"
+#include "stb_image.h"
 
 #include "cmath.h"
-#include "cube.glsl.h"
+#include "textured.glsl.h"
 
 static struct {
     float rx;
@@ -14,9 +18,17 @@ static struct {
     sg_pipeline pip;
     sg_bindings bind;
     sg_pass_action pass_action;
+    uint8_t file_buffer[1024 * 256];
 } state;
 
-static void printf_wrapper(const char* fmt, ...) {
+typedef struct {
+    float x, y, z;
+    int16_t u, v;
+} vertex_t;
+
+static void fetch_callback(const sfetch_response_t *fetch);
+
+static void printf_wrapper(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     sdtx_vprintf(fmt, args);
@@ -29,6 +41,13 @@ void init() {
         .logger.func = slog_func,
     });
 
+    sfetch_setup(&(sfetch_desc_t) {
+        .max_requests = 1,
+        .num_channels = 1,
+        .num_lanes = 1,
+        .logger.func = slog_func,
+    });
+
     sdtx_setup(&(sdtx_desc_t) {
         .fonts = {
             [0] = sdtx_font_oric(),
@@ -36,38 +55,40 @@ void init() {
         .logger.func = slog_func,
     });
 
-    float vertices[] = {
-        -1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-         1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-         1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-        -1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+    const vertex_t vertices[] = {
+        // pos                  uvs
+        { -1.0f, -1.0f, -1.0f,      0,     0 },
+        {  1.0f, -1.0f, -1.0f,  32767,     0 },
+        {  1.0f,  1.0f, -1.0f,  32767, 32767 },
+        { -1.0f,  1.0f, -1.0f,      0, 32767 },
 
-        -1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-         1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-         1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-        -1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+        { -1.0f, -1.0f,  1.0f,      0,     0 },
+        {  1.0f, -1.0f,  1.0f,  32767,     0 },
+        {  1.0f,  1.0f,  1.0f,  32767, 32767 },
+        { -1.0f,  1.0f,  1.0f,      0, 32767 },
 
-        -1.0, -1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0,  1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0,  1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0, -1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
+        { -1.0f, -1.0f, -1.0f,      0,     0 },
+        { -1.0f,  1.0f, -1.0f,  32767,     0 },
+        { -1.0f,  1.0f,  1.0f,  32767, 32767 },
+        { -1.0f, -1.0f,  1.0f,      0, 32767 },
 
-        1.0, -1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0,  1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0,  1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0, -1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
+        {  1.0f, -1.0f, -1.0f,      0,     0 },
+        {  1.0f,  1.0f, -1.0f,  32767,     0 },
+        {  1.0f,  1.0f,  1.0f,  32767, 32767 },
+        {  1.0f, -1.0f,  1.0f,      0, 32767 },
 
-        -1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
-        -1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
-         1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
-         1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
+        { -1.0f, -1.0f, -1.0f,      0,     0 },
+        { -1.0f, -1.0f,  1.0f,  32767,     0 },
+        {  1.0f, -1.0f,  1.0f,  32767, 32767 },
+        {  1.0f, -1.0f, -1.0f,      0, 32767 },
 
-        -1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0,
-        -1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
-         1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
-         1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0
+        { -1.0f,  1.0f, -1.0f,      0,     0 },
+        { -1.0f,  1.0f,  1.0f,  32767,     0 },
+        {  1.0f,  1.0f,  1.0f,  32767, 32767 },
+        {  1.0f,  1.0f, -1.0f,      0, 32767 },
     };
-    state.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
+
+   state.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
         .data = SG_RANGE(vertices),
         .label = "cube-vertices"
     });
@@ -86,15 +107,23 @@ void init() {
         .label = "cube-indices"
     });
 
-    sg_shader shd = sg_make_shader(cube_shader_desc(sg_query_backend()));
+    state.bind.images[IMG_tex] = sg_alloc_image();
+    state.bind.samplers[SMP_smp] = sg_make_sampler(&(sg_sampler_desc) {
+        .min_filter = SG_FILTER_LINEAR,
+        .mag_filter = SG_FILTER_LINEAR,
+        .wrap_u = SG_WRAP_REPEAT,
+        .wrap_v = SG_WRAP_REPEAT,
+        .label = "cube-sampler",
+    });
+
+    sg_shader shd = sg_make_shader(textured_shader_desc(sg_query_backend()));
 
     state.pip = sg_make_pipeline(&(sg_pipeline_desc) {
         .shader = shd,
         .layout = {
-            .buffers[0].stride = 28,
             .attrs = {
-                [ATTR_cube_a_pos].format = SG_VERTEXFORMAT_FLOAT3,
-                [ATTR_cube_a_color].format = SG_VERTEXFORMAT_FLOAT4,
+                [ATTR_textured_a_pos].format = SG_VERTEXFORMAT_FLOAT3,
+                [ATTR_textured_a_texcoord].format = SG_VERTEXFORMAT_SHORT2N,
             },
         },
         .index_type = SG_INDEXTYPE_UINT16,
@@ -113,9 +142,51 @@ void init() {
             .clear_value = {0.0f, 0.0f, 0.0f, 1.0f},
         },
     };
+
+    char path_buf[512];
+    sfetch_send(&(sfetch_request_t) {
+        .path = "public/baboon.png",
+        .callback = fetch_callback,
+        .buffer = SFETCH_RANGE(state.file_buffer),
+    });
+}
+
+static void fetch_callback(const sfetch_response_t *fetch) {
+    if (fetch->fetched) {
+        int w, h, n;
+        uint8_t *data = stbi_load_from_memory(fetch->data.ptr, fetch->data.size, &w, &h, &n, 4);
+        if (data) {
+            sg_init_image(state.bind.images[IMG_tex], &(sg_image_desc) {
+                .width = w,
+                .height = h,
+                .pixel_format = SG_PIXELFORMAT_RGBA8,
+                .data.subimage[0][0] = {
+                    .ptr = data,
+                    .size = (size_t)(w * h * 4),
+                },
+                .label = "cube-image",
+            });
+         state.pass_action = (sg_pass_action) {
+            .colors[0] = {
+                .load_action = SG_LOADACTION_CLEAR,
+                .clear_value = {0.0f, 0.2f, 0.0f, 1.0f},
+            },
+        };
+            stbi_image_free(data);
+        }
+    } else {
+        state.pass_action = (sg_pass_action) {
+            .colors[0] = {
+                .load_action = SG_LOADACTION_CLEAR,
+                .clear_value = {1.0f, 0.0f, 0.0f, 1.0f},
+            },
+        };
+    }
 }
 
 void update() {
+    sfetch_dowork();
+
     uint32_t frame_count = sapp_frame_count();
     double frame_time = sapp_frame_duration() * 1000.0; 
     vs_params_t vs_params;
@@ -123,8 +194,8 @@ void update() {
     const float h = sapp_heightf();
     const float t = (float)sapp_frame_duration();
     state.rx += 1.0f * t; state.ry += 2.0f * t;
-    mat4 proj = mat4_perspective(60.0f, w / h, 0.1f, 10.0f);
-    mat4 view = mat4_look_at((vec3){0.0f, 0.0f, 3.0f}, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
+    mat4 proj = mat4_perspective(60.0f * 3.1456f / 180.0f, w / h, 0.1f, 10.0f);
+    mat4 view = mat4_look_at((vec3){0.0f, 1.5f, 6.0f}, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
     mat4 model = mat4_rotate_y(mat4_rotate_x(mat4_create(), state.rx), state.ry);
     vs_params.mvp = mat4_multiply(mat4_multiply(proj, view), model);
 
@@ -135,7 +206,7 @@ void update() {
     sdtx_printf("Frame: %u\n", frame_count);
 
     float g = state.pass_action.colors[0].clear_value.g + 0.01f;
-    state.pass_action.colors[0].clear_value.g = g > 1.0f ? 0.0f : g;
+    //state.pass_action.colors[0].clear_value.g = g > 1.0f ? 0.0f : g;
     sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
 
     sg_apply_pipeline(state.pip);
