@@ -34,27 +34,6 @@ static void printf_wrapper(const char *fmt, ...) {
     sdtx_vprintf(fmt, args);
     va_end(args);
 }
-
-void init() {
-    sg_setup(&(sg_desc) {
-        .environment = sglue_environment(),
-        .logger.func = slog_func,
-    });
-
-    sfetch_setup(&(sfetch_desc_t) {
-        .max_requests = 1,
-        .num_channels = 1,
-        .num_lanes = 1,
-        .logger.func = slog_func,
-    });
-
-    sdtx_setup(&(sdtx_desc_t) {
-        .fonts = {
-            [0] = sdtx_font_oric(),
-        },
-        .logger.func = slog_func,
-    });
-
     const vertex_t vertices[] = {
         // pos                  uvs
         { -1.0f, -1.0f, -1.0f,      0,     0 },
@@ -88,11 +67,6 @@ void init() {
         {  1.0f,  1.0f, -1.0f,      0, 32767 },
     };
 
-   state.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
-        .data = SG_RANGE(vertices),
-        .label = "cube-vertices"
-    });
-
     uint16_t indices[] = {
         0, 1, 2,  0, 2, 3,
         6, 5, 4,  7, 6, 4,
@@ -101,9 +75,40 @@ void init() {
         16, 17, 18,  16, 18, 19,
         22, 21, 20,  23, 22, 20
     };
-    state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
-        .data = SG_RANGE(indices),
+ 
+void init() {
+    sg_setup(&(sg_desc) {
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+
+    sfetch_setup(&(sfetch_desc_t) {
+        .max_requests = 1,
+        .num_channels = 1,
+        .num_lanes = 1,
+        .logger.func = slog_func,
+    });
+
+    sdtx_setup(&(sdtx_desc_t) {
+        .fonts = {
+            [0] = sdtx_font_oric(),
+        },
+        .logger.func = slog_func,
+    });
+
+   state.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
+        // .data = SG_RANGE(vertices),
+        .size = sizeof(vertices),
+        .type = SG_BUFFERTYPE_VERTEXBUFFER,
+        .usage = SG_USAGE_DYNAMIC,
+        .label = "cube-vertices"
+    });
+
+   state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
+        // .data = SG_RANGE(indices),
+        .size = sizeof(indices),
         .type = SG_BUFFERTYPE_INDEXBUFFER,
+        .usage = SG_USAGE_DYNAMIC,
         .label = "cube-indices"
     });
 
@@ -145,7 +150,7 @@ void init() {
 
     char path_buf[512];
     sfetch_send(&(sfetch_request_t) {
-        .path = "public/baboon.png",
+        .path = "baboon.png",
         .callback = fetch_callback,
         .buffer = SFETCH_RANGE(state.file_buffer),
     });
@@ -189,6 +194,7 @@ void update() {
 
     uint32_t frame_count = sapp_frame_count();
     double frame_time = sapp_frame_duration() * 1000.0; 
+
     vs_params_t vs_params;
     const float w = sapp_widthf();
     const float h = sapp_heightf();
@@ -205,13 +211,16 @@ void update() {
     sdtx_color1i(0xFFFFFFFF);
     sdtx_printf("Frame: %u\n", frame_count);
 
+    sg_update_buffer(state.bind.vertex_buffers[0], SG_RANGE_REF(vertices));
+    sg_update_buffer(state.bind.index_buffer, SG_RANGE_REF(indices));
+
     float g = state.pass_action.colors[0].clear_value.g + 0.01f;
     //state.pass_action.colors[0].clear_value.g = g > 1.0f ? 0.0f : g;
     sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
 
     sg_apply_pipeline(state.pip);
     sg_apply_bindings(&state.bind);
-    sg_apply_uniforms(UB_vs_params, &SG_RANGE(vs_params));
+    sg_apply_uniforms(UB_vs_params, SG_RANGE_REF(vs_params));
     sg_draw(0, 36, 1);
 
     sdtx_draw();

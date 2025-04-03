@@ -45,8 +45,9 @@ void init_minimal_emcc(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "emcc",                    // Emscripten compiler
         "-std=c23",               // C standard
-        "-o", "tiny.js",
-        "-Os",                    // Optimize for size
+        "-o", "public/tiny.js",
+        "-O0",                    // Optimize for size
+        "-s", "BINARYEN=0",        // Disable Binaryen
         "-s", "WASM=1",               // Output WebAssembly,
         "-s", "ALLOW_MEMORY_GROWTH=0", // Allow memory growth
         "-s", "MINIMAL_RUNTIME=0",     // Minimal runtime
@@ -116,7 +117,7 @@ int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "bear", "--");
+    //nob_cmd_append(&cmd, "bear", "--");
     init_minimal_emcc(&cmd);
 
     nob_cmd_run_sync_and_reset(&cmd);

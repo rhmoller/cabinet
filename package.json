@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "postinstall": "clang -o nob nob.c",
-    "dev": "concurrently 'vite' 'npm run watch:wasm'",
+    "dev": "concurrently 'npm run serve' 'npm run watch:wasm'",
     "build": "tsc && vite build",
     "old:build:wasm": "clang --target=wasm32 -O3 -flto -nostdlib -Wl,--no-entry -Wl,--export-all -o glue/wasm/main.wasm src/main.c",
     "build:wasm": "./nob",
     "watch:wasm": "chokidar 'src/**/*.{c,h}' -c 'npm run build:wasm'",
+    "serve": "npx live-server public",
     "preview": "vite preview"
   },
   "devDependencies": {
