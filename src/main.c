@@ -12,6 +12,135 @@
 #include "cmath.h"
 #include "textured.glsl.h"
 
+#include <stdint.h>
+
+#define TEXTURE_ATLAS_SIZE 256.0f
+#define TILE_COUNT_X 16
+#define TILE_COUNT_Y 16
+#define TILE_SIZE (TEXTURE_ATLAS_SIZE / TILE_COUNT_X)
+#define VERTEX_STRIDE 5  // x,y,z,u,v
+
+typedef struct {
+    float* vertex_buffer;  // Pointer to interleaved vertex data [x,y,z,u,v,...]
+    size_t current_index;  // Current byte position (in floats)
+    size_t max_vertices;   // Maximum number of vertices
+} WorldBuilder;
+
+// Initialize the world builder
+void world_builder_init(WorldBuilder* builder, float* vertex_buffer, size_t max_vertices) {
+    builder->vertex_buffer = vertex_buffer;
+    builder->current_index = 0;
+    builder->max_vertices = max_vertices * VERTEX_STRIDE;
+}
+
+// Internal helper to add a vertex
+static void add_vertex(WorldBuilder* builder, vec3 pos, float u, float v) {
+    if (builder->current_index + VERTEX_STRIDE <= builder->max_vertices) {
+        float* ptr = builder->vertex_buffer + builder->current_index;
+        ptr[0] = pos.x;
+        ptr[1] = pos.y;
+        ptr[2] = pos.z;
+        ptr[3] = u;
+        ptr[4] = v;
+        builder->current_index += VERTEX_STRIDE;
+    }
+}
+
+// Add a quad to the mesh
+void world_builder_add_quad(
+    WorldBuilder* builder,
+    vec3 start,
+    vec3 vec1,
+    vec3 vec2,
+    uint16_t tileIdx
+) {
+    // Calculate texture coordinates
+    float tile_x = (float)(tileIdx % TILE_COUNT_X);
+    float tile_y = (float)(tileIdx / TILE_COUNT_X);
+    
+    float u0 = (tile_x * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
+    float v0 = (tile_y * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
+    float u1 = ((tile_x + 1) * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
+    float v1 = ((tile_y + 1) * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
+
+    // Calculate quad corners
+    vec3 corners[4] = {
+        start,                                  // Corner 0
+        {start.x + vec1.x, start.y + vec1.y, start.z + vec1.z}, // Corner 1
+        {start.x + vec1.x + vec2.x,              // Corner 2
+         start.y + vec1.y + vec2.y,
+         start.z + vec1.z + vec2.z},
+        {start.x + vec2.x, start.y + vec2.y, start.z + vec2.z} // Corner 3
+    };
+
+    // Add two triangles (CCW winding)
+    // Triangle 1
+    add_vertex(builder, corners[0], u0, v0);
+    add_vertex(builder, corners[1], u1, v0);
+    add_vertex(builder, corners[2], u1, v1);
+    
+    // Triangle 2
+    add_vertex(builder, corners[0], u0, v0);
+    add_vertex(builder, corners[2], u1, v1);
+    add_vertex(builder, corners[3], u0, v1);
+}
+
+// Get the current vertex count
+size_t world_builder_get_vertex_count(const WorldBuilder* builder) {
+    return builder->current_index / VERTEX_STRIDE;
+}
+
+// Adds a cube to the mesh with the given center position, size, and tile indices for each face
+void world_builder_add_cube(
+    WorldBuilder* builder,
+    vec3 center,
+    float size,
+    uint16_t front_tile,
+    uint16_t back_tile,
+    uint16_t left_tile,
+    uint16_t right_tile,
+    uint16_t top_tile,
+    uint16_t bottom_tile
+) {
+    float half_size = size * 0.5f;
+    vec3 corners[8] = {
+        {center.x - half_size, center.y - half_size, center.z - half_size}, // 0: left-bottom-back
+        {center.x + half_size, center.y - half_size, center.z - half_size}, // 1: right-bottom-back
+        {center.x + half_size, center.y + half_size, center.z - half_size}, // 2: right-top-back
+        {center.x - half_size, center.y + half_size, center.z - half_size}, // 3: left-top-back
+
+        {center.x - half_size, center.y - half_size, center.z + half_size}, // 4: left-bottom-front
+        {center.x + half_size, center.y - half_size, center.z + half_size}, // 5: right-bottom-front
+
+        {center.x + half_size, center.y + half_size, center.z + half_size}, // 6: right-top-front
+        {center.x - half_size, center.y + half_size, center.z + half_size}  // 7: left-top-front
+    };
+
+    // Front face (using front_tile)
+    world_builder_add_quad(builder, corners[7], 
+        (vec3){size, 0, 0}, (vec3){0, -size, 0}, front_tile);
+    
+    // Back face (using back_tile)
+    world_builder_add_quad(builder, corners[2], 
+        (vec3){-size, 0, 0}, (vec3){0, -size, 0}, back_tile);
+    
+    // Left face (using left_tile)
+    world_builder_add_quad(builder, corners[3], 
+        (vec3){0, 0, size}, (vec3){0, -size, 0}, left_tile);
+    
+    // Right face (using right_tile)
+    world_builder_add_quad(builder, corners[6], 
+        (vec3){0, 0, -size}, (vec3){0, -size, 0}, right_tile);
+    
+    // Top face (using top_tile)
+    world_builder_add_quad(builder, corners[3], 
+        (vec3){size, 0, 0}, (vec3){0, 0, size}, top_tile);
+    
+    // Bottom face (using bottom_tile)
+    world_builder_add_quad(builder, corners[4], 
+        (vec3){size, 0, 0}, (vec3){0, 0, -size}, bottom_tile);
+}
+
 static struct {
     float rx;
     float ry;
@@ -34,7 +163,11 @@ static void printf_wrapper(const char *fmt, ...) {
     sdtx_vprintf(fmt, args);
     va_end(args);
 }
-    const vertex_t vertices[] = {
+
+float vertices[5 * 6 * 6 * 5000];
+
+
+    const vertex_t vertices_old[] = {
         // pos                  uvs
         { -1.0f, -1.0f, -1.0f,      0,     0 },
         {  1.0f, -1.0f, -1.0f,  32767,     0 },
@@ -75,6 +208,8 @@ static void printf_wrapper(const char *fmt, ...) {
         16, 17, 18,  16, 18, 19,
         22, 21, 20,  23, 22, 20
     };
+
+WorldBuilder builder = { vertices, 0, sizeof(vertices) / sizeof(vertex_t) };
  
 void init() {
     sg_setup(&(sg_desc) {
@@ -104,13 +239,13 @@ void init() {
         .label = "cube-vertices"
     });
 
-   state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
-        // .data = SG_RANGE(indices),
-        .size = sizeof(indices),
-        .type = SG_BUFFERTYPE_INDEXBUFFER,
-        .usage = SG_USAGE_DYNAMIC,
-        .label = "cube-indices"
-    });
+   // state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
+   //      // .data = SG_RANGE(indices),
+   //      .size = sizeof(indices),
+   //      .type = SG_BUFFERTYPE_INDEXBUFFER,
+   //      .usage = SG_USAGE_DYNAMIC,
+   //      .label = "cube-indices"
+   //  });
 
     state.bind.images[IMG_tex] = sg_alloc_image();
     state.bind.samplers[SMP_smp] = sg_make_sampler(&(sg_sampler_desc) {
@@ -128,11 +263,10 @@ void init() {
         .layout = {
             .attrs = {
                 [ATTR_textured_a_pos].format = SG_VERTEXFORMAT_FLOAT3,
-                [ATTR_textured_a_texcoord].format = SG_VERTEXFORMAT_SHORT2N,
+                [ATTR_textured_a_texcoord].format = SG_VERTEXFORMAT_FLOAT2,
             },
         },
-        .index_type = SG_INDEXTYPE_UINT16,
-        .cull_mode = SG_CULLMODE_BACK,
+        .cull_mode = SG_CULLMODE_NONE,
         .depth = {
             .write_enabled = true,
             .compare = SG_COMPAREFUNC_LESS_EQUAL,
@@ -150,10 +284,12 @@ void init() {
 
     char path_buf[512];
     sfetch_send(&(sfetch_request_t) {
-        .path = "baboon.png",
+        .path = "neo16.png",
         .callback = fetch_callback,
         .buffer = SFETCH_RANGE(state.file_buffer),
     });
+
+    world_builder_add_cube(&builder, (vec3){0.0f, 0.0f, 0.0f}, 1.0f, 0, 1, 2, 3, 4, 5);
 }
 
 static void fetch_callback(const sfetch_response_t *fetch) {
@@ -199,7 +335,7 @@ void update() {
     const float w = sapp_widthf();
     const float h = sapp_heightf();
     const float t = (float)sapp_frame_duration();
-    state.rx += 1.0f * t; state.ry += 2.0f * t;
+    state.rx += 1.2f * t; state.ry += 1.7f * t;
     mat4 proj = mat4_perspective(60.0f * 3.1456f / 180.0f, w / h, 0.1f, 10.0f);
     mat4 view = mat4_look_at((vec3){0.0f, 1.5f, 6.0f}, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
     mat4 model = mat4_rotate_y(mat4_rotate_x(mat4_create(), state.rx), state.ry);
