@@ -7,139 +7,14 @@
 #include "sokol_glue.h"
 #include "sokol_log.h"
 #include "sokol_debugtext.h"
+#include "sokol_time.h"
 #include "stb_image.h"
 
 #include "cmath.h"
 #include "textured.glsl.h"
+#include "world_builder.h"
 
 #include <stdint.h>
-
-#define TEXTURE_ATLAS_SIZE 256.0f
-#define TILE_COUNT_X 16
-#define TILE_COUNT_Y 16
-#define TILE_SIZE (TEXTURE_ATLAS_SIZE / TILE_COUNT_X)
-#define VERTEX_STRIDE 5  // x,y,z,u,v
-
-typedef struct {
-    float* vertex_buffer;  // Pointer to interleaved vertex data [x,y,z,u,v,...]
-    size_t current_index;  // Current byte position (in floats)
-    size_t max_vertices;   // Maximum number of vertices
-} WorldBuilder;
-
-// Initialize the world builder
-void world_builder_init(WorldBuilder* builder, float* vertex_buffer, size_t max_vertices) {
-    builder->vertex_buffer = vertex_buffer;
-    builder->current_index = 0;
-    builder->max_vertices = max_vertices * VERTEX_STRIDE;
-}
-
-// Internal helper to add a vertex
-static void add_vertex(WorldBuilder* builder, vec3 pos, float u, float v) {
-    if (builder->current_index + VERTEX_STRIDE <= builder->max_vertices) {
-        float* ptr = builder->vertex_buffer + builder->current_index;
-        ptr[0] = pos.x;
-        ptr[1] = pos.y;
-        ptr[2] = pos.z;
-        ptr[3] = u;
-        ptr[4] = v;
-        builder->current_index += VERTEX_STRIDE;
-    }
-}
-
-// Add a quad to the mesh
-void world_builder_add_quad(
-    WorldBuilder* builder,
-    vec3 start,
-    vec3 vec1,
-    vec3 vec2,
-    uint16_t tileIdx
-) {
-    // Calculate texture coordinates
-    float tile_x = (float)(tileIdx % TILE_COUNT_X);
-    float tile_y = (float)(tileIdx / TILE_COUNT_X);
-    
-    float u0 = (tile_x * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
-    float v0 = (tile_y * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
-    float u1 = ((tile_x + 1) * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
-    float v1 = ((tile_y + 1) * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
-
-    // Calculate quad corners
-    vec3 corners[4] = {
-        start,                                  // Corner 0
-        {start.x + vec1.x, start.y + vec1.y, start.z + vec1.z}, // Corner 1
-        {start.x + vec1.x + vec2.x,              // Corner 2
-         start.y + vec1.y + vec2.y,
-         start.z + vec1.z + vec2.z},
-        {start.x + vec2.x, start.y + vec2.y, start.z + vec2.z} // Corner 3
-    };
-
-    // Add two triangles (CCW winding)
-    // Triangle 1
-    add_vertex(builder, corners[0], u0, v0);
-    add_vertex(builder, corners[1], u1, v0);
-    add_vertex(builder, corners[2], u1, v1);
-    
-    // Triangle 2
-    add_vertex(builder, corners[0], u0, v0);
-    add_vertex(builder, corners[2], u1, v1);
-    add_vertex(builder, corners[3], u0, v1);
-}
-
-// Get the current vertex count
-size_t world_builder_get_vertex_count(const WorldBuilder* builder) {
-    return builder->current_index / VERTEX_STRIDE;
-}
-
-// Adds a cube to the mesh with the given center position, size, and tile indices for each face
-void world_builder_add_cube(
-    WorldBuilder* builder,
-    vec3 center,
-    float size,
-    uint16_t front_tile,
-    uint16_t back_tile,
-    uint16_t left_tile,
-    uint16_t right_tile,
-    uint16_t top_tile,
-    uint16_t bottom_tile
-) {
-    float half_size = size * 0.5f;
-    vec3 corners[8] = {
-        {center.x - half_size, center.y - half_size, center.z - half_size}, // 0: left-bottom-back
-        {center.x + half_size, center.y - half_size, center.z - half_size}, // 1: right-bottom-back
-        {center.x + half_size, center.y + half_size, center.z - half_size}, // 2: right-top-back
-        {center.x - half_size, center.y + half_size, center.z - half_size}, // 3: left-top-back
-
-        {center.x - half_size, center.y - half_size, center.z + half_size}, // 4: left-bottom-front
-        {center.x + half_size, center.y - half_size, center.z + half_size}, // 5: right-bottom-front
-
-        {center.x + half_size, center.y + half_size, center.z + half_size}, // 6: right-top-front
-        {center.x - half_size, center.y + half_size, center.z + half_size}  // 7: left-top-front
-    };
-
-    // Front face (using front_tile)
-    world_builder_add_quad(builder, corners[7], 
-        (vec3){size, 0, 0}, (vec3){0, -size, 0}, front_tile);
-    
-    // Back face (using back_tile)
-    world_builder_add_quad(builder, corners[2], 
-        (vec3){-size, 0, 0}, (vec3){0, -size, 0}, back_tile);
-    
-    // Left face (using left_tile)
-    world_builder_add_quad(builder, corners[3], 
-        (vec3){0, 0, size}, (vec3){0, -size, 0}, left_tile);
-    
-    // Right face (using right_tile)
-    world_builder_add_quad(builder, corners[6], 
-        (vec3){0, 0, -size}, (vec3){0, -size, 0}, right_tile);
-    
-    // Top face (using top_tile)
-    world_builder_add_quad(builder, corners[3], 
-        (vec3){size, 0, 0}, (vec3){0, 0, size}, top_tile);
-    
-    // Bottom face (using bottom_tile)
-    world_builder_add_quad(builder, corners[4], 
-        (vec3){size, 0, 0}, (vec3){0, 0, -size}, bottom_tile);
-}
 
 static struct {
     float rx;
@@ -164,54 +39,34 @@ static void printf_wrapper(const char *fmt, ...) {
     va_end(args);
 }
 
-float vertices[5 * 6 * 6 * 5000];
+float vertices[5 * 36 * 1000 * 50]; // space for 50k cubes
+WorldBuilder builder = { vertices, 0, sizeof(vertices) / sizeof(float) };
+
+void create_world(float t) {
+    world_builder_init(&builder, vertices, sizeof(vertices) / sizeof(float));
+    float y = -2.0f; 
+     for (int x = -30; x < 30; x++) {
+            for (int z = -30; z < 30; z++) {
+                float cy =  cos(x * 0.15f + t * 0.0013f) * 2.0f + sin(z * 0.15f + t * 0.001f) * 2.0f;
+                vec3 center = { x * 1.0f, y * 1.0f + 2.0f * cy - 2.0f, z * 1.0f };
+                int t = abs(x + z) % 3;//rand() % 6;
+                world_builder_add_cube(&builder, center, 1.0f, t, t, t, t, t, t);
+            }
+    }
+   for (int x = -30; x < 30; x++) {
+            for (int z = -30; z < 30; z++) {
+                float cy = sin(x * 0.05f + t * 0.0012f) * 2.0f + cos(z * 0.05f + t * 0.0011f) * 2.0f;
+                vec3 center = { x * 1.0f, y * 1.0f + 2.0f * cy - 2.0f, z * 1.0f };
+                int t = 3 + abs(x + z) % 3;//rand() % 6;
+                world_builder_add_cube(&builder, center, 1.0f, t, t, t, t, t, t);
+            }
+    }
+}
 
 
-    const vertex_t vertices_old[] = {
-        // pos                  uvs
-        { -1.0f, -1.0f, -1.0f,      0,     0 },
-        {  1.0f, -1.0f, -1.0f,  32767,     0 },
-        {  1.0f,  1.0f, -1.0f,  32767, 32767 },
-        { -1.0f,  1.0f, -1.0f,      0, 32767 },
-
-        { -1.0f, -1.0f,  1.0f,      0,     0 },
-        {  1.0f, -1.0f,  1.0f,  32767,     0 },
-        {  1.0f,  1.0f,  1.0f,  32767, 32767 },
-        { -1.0f,  1.0f,  1.0f,      0, 32767 },
-
-        { -1.0f, -1.0f, -1.0f,      0,     0 },
-        { -1.0f,  1.0f, -1.0f,  32767,     0 },
-        { -1.0f,  1.0f,  1.0f,  32767, 32767 },
-        { -1.0f, -1.0f,  1.0f,      0, 32767 },
-
-        {  1.0f, -1.0f, -1.0f,      0,     0 },
-        {  1.0f,  1.0f, -1.0f,  32767,     0 },
-        {  1.0f,  1.0f,  1.0f,  32767, 32767 },
-        {  1.0f, -1.0f,  1.0f,      0, 32767 },
-
-        { -1.0f, -1.0f, -1.0f,      0,     0 },
-        { -1.0f, -1.0f,  1.0f,  32767,     0 },
-        {  1.0f, -1.0f,  1.0f,  32767, 32767 },
-        {  1.0f, -1.0f, -1.0f,      0, 32767 },
-
-        { -1.0f,  1.0f, -1.0f,      0,     0 },
-        { -1.0f,  1.0f,  1.0f,  32767,     0 },
-        {  1.0f,  1.0f,  1.0f,  32767, 32767 },
-        {  1.0f,  1.0f, -1.0f,      0, 32767 },
-    };
-
-    uint16_t indices[] = {
-        0, 1, 2,  0, 2, 3,
-        6, 5, 4,  7, 6, 4,
-        8, 9, 10,  8, 10, 11,
-        14, 13, 12,  15, 14, 12,
-        16, 17, 18,  16, 18, 19,
-        22, 21, 20,  23, 22, 20
-    };
-
-WorldBuilder builder = { vertices, 0, sizeof(vertices) / sizeof(vertex_t) };
- 
 void init() {
+    stm_setup();
+
     sg_setup(&(sg_desc) {
         .environment = sglue_environment(),
         .logger.func = slog_func,
@@ -239,20 +94,12 @@ void init() {
         .label = "cube-vertices"
     });
 
-   // state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
-   //      // .data = SG_RANGE(indices),
-   //      .size = sizeof(indices),
-   //      .type = SG_BUFFERTYPE_INDEXBUFFER,
-   //      .usage = SG_USAGE_DYNAMIC,
-   //      .label = "cube-indices"
-   //  });
-
     state.bind.images[IMG_tex] = sg_alloc_image();
     state.bind.samplers[SMP_smp] = sg_make_sampler(&(sg_sampler_desc) {
-        .min_filter = SG_FILTER_LINEAR,
-        .mag_filter = SG_FILTER_LINEAR,
-        .wrap_u = SG_WRAP_REPEAT,
-        .wrap_v = SG_WRAP_REPEAT,
+        .min_filter = SG_FILTER_NEAREST,
+        .mag_filter = SG_FILTER_NEAREST,
+        .wrap_u = SG_WRAP_CLAMP_TO_EDGE,
+        .wrap_v = SG_WRAP_CLAMP_TO_EDGE,
         .label = "cube-sampler",
     });
 
@@ -266,7 +113,7 @@ void init() {
                 [ATTR_textured_a_texcoord].format = SG_VERTEXFORMAT_FLOAT2,
             },
         },
-        .cull_mode = SG_CULLMODE_NONE,
+        .cull_mode = SG_CULLMODE_BACK,
         .depth = {
             .write_enabled = true,
             .compare = SG_COMPAREFUNC_LESS_EQUAL,
@@ -289,7 +136,7 @@ void init() {
         .buffer = SFETCH_RANGE(state.file_buffer),
     });
 
-    world_builder_add_cube(&builder, (vec3){0.0f, 0.0f, 0.0f}, 1.0f, 0, 1, 2, 3, 4, 5);
+    create_world(0.0f);
 }
 
 static void fetch_callback(const sfetch_response_t *fetch) {
@@ -325,6 +172,8 @@ static void fetch_callback(const sfetch_response_t *fetch) {
     }
 }
 
+bool is_updated = false;
+
 void update() {
     sfetch_dowork();
 
@@ -335,9 +184,10 @@ void update() {
     const float w = sapp_widthf();
     const float h = sapp_heightf();
     const float t = (float)sapp_frame_duration();
-    state.rx += 1.2f * t; state.ry += 1.7f * t;
-    mat4 proj = mat4_perspective(60.0f * 3.1456f / 180.0f, w / h, 0.1f, 10.0f);
-    mat4 view = mat4_look_at((vec3){0.0f, 1.5f, 6.0f}, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
+    state.rx += 0.0f; 
+    state.ry += 0.2f * t;
+    mat4 proj = mat4_perspective(60.0f * 3.1456f / 180.0f, w / h, 0.1f, 100.0f);
+    mat4 view = mat4_look_at((vec3){0.0f, 5.0f, -30.0f}, (vec3){0.0f, -10.0f, 0.0f}, (vec3){0.0f, 1.0f, 0.0f});
     mat4 model = mat4_rotate_y(mat4_rotate_x(mat4_create(), state.rx), state.ry);
     vs_params.mvp = mat4_multiply(mat4_multiply(proj, view), model);
 
@@ -345,10 +195,18 @@ void update() {
     sdtx_origin(5.0f, 5.0f);
     sdtx_font(0);
     sdtx_color1i(0xFFFFFFFF);
-    sdtx_printf("Frame: %u\n", frame_count);
 
-    sg_update_buffer(state.bind.vertex_buffers[0], SG_RANGE_REF(vertices));
-    sg_update_buffer(state.bind.index_buffer, SG_RANGE_REF(indices));
+    size_t vertex_count = world_builder_get_vertex_count(&builder);
+    sdtx_printf("Vertices: %zu\n", vertex_count); 
+    sdtx_printf("Triangles: %zu\n", vertex_count / 3);
+    sdtx_printf("Cubes: %zu\n", vertex_count / 36);
+
+    float now = stm_ms(stm_now());
+    if (!is_updated) {
+        create_world(now);
+        sg_update_buffer(state.bind.vertex_buffers[0], &(sg_range){ .ptr = vertices, .size = builder.current_index * sizeof(float) });
+        //is_updated = true;
+    }
 
     float g = state.pass_action.colors[0].clear_value.g + 0.01f;
     //state.pass_action.colors[0].clear_value.g = g > 1.0f ? 0.0f : g;
@@ -357,7 +215,7 @@ void update() {
     sg_apply_pipeline(state.pip);
     sg_apply_bindings(&state.bind);
     sg_apply_uniforms(UB_vs_params, SG_RANGE_REF(vs_params));
-    sg_draw(0, 36, 1);
+    sg_draw(0, world_builder_get_vertex_count(&builder), 1);
 
     sdtx_draw();
 
@@ -383,5 +241,6 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         .height = 1080 / 4,
         .window_title = "Sokol App",
         .logger.func = slog_func,
+        .html5_bubble_key_events = true
     };
 }

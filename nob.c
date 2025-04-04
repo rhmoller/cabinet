@@ -24,24 +24,7 @@ void init_clang_wasm(Nob_Cmd *cmd, const char *output_wasm) {
     );
 }
 
-void init_emcc_wasm(Nob_Cmd *cmd, const char *output_wasm) {
-    nob_cmd_append(cmd,
-        "emcc",                    // Emscripten compiler
-        "-std=c23",               // C standard
-        "-Wall", "-Wextra",       // Warnings
-        "-O2",                    // Optimize for performance
-        "-Iinclude",              // Include directory for cglm, cgltf
-        "-Isrc",                  // 
-        "-s", "USE_WEBGL2=1",     // Enable WebGL 2
-        "-s", "EXPORT_ES6=1",     // Export as ES6 module
-        "-s", "MODULARIZE=1",     // Modularize for Vite
-        "-o", output_wasm,        // Output WebAssembly
-    );
-}
-
-
-// emcc src/tiny.c -o cube.js -Os -s WASM=1 -s ALLOW_MEMORY_GROWTH=0 -s MINIMAL_RUNTIME=0 -s GL_UNSAFE_OPTS=1 -s ENVIRONMENT=web -s USE_GLFW=0 -s TOTAL_MEMORY=16MB -s USE_WEBGL2 -s EXIT_RUNTIME=0
-void init_minimal_emcc(Nob_Cmd *cmd) {
+void init_emcc(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "emcc",                    // Emscripten compiler
         "-std=c23",               // C standard
@@ -59,12 +42,10 @@ void init_minimal_emcc(Nob_Cmd *cmd) {
         "-s", "USE_GLFW=0",         // Disable GLFW
         "-s", "FILESYSTEM=0",         // Disable file system
         "-s", "ASSERTIONS=0",         // Disable assertions
-        "-s", "TOTAL_MEMORY=16MB", // Total memory
+        "-s", "TOTAL_MEMORY=256MB", // Total memory
         "-D", "SOKOL_GLES3", // Use GLES3
-        "src/main.c",
     );
 }
-
 
 void init_clang_native(Nob_Cmd *cmd, const char *output_exe) {
     nob_cmd_append(cmd,
@@ -112,16 +93,22 @@ bool collect_c_files(Nob_File_Paths *c_files, Nob_File_Paths *h_files) {
     return true;
 }
 
-
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
     Nob_Cmd cmd = {0};
     //nob_cmd_append(&cmd, "bear", "--");
-    init_minimal_emcc(&cmd);
+    init_emcc(&cmd);
+    Nob_File_Paths c_files = {0};
+    Nob_File_Paths h_files = {0};
+    if (!collect_c_files(&c_files, &h_files)) {
+        return 1;
+    }
 
+    for (size_t i = 0; i < c_files.count; i++) {
+        nob_cmd_append(&cmd, c_files.items[i]);
+    }
     nob_cmd_run_sync_and_reset(&cmd);
-
 
 /*
   Nob_File_Paths c_files = {0};
