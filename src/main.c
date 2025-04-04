@@ -42,25 +42,43 @@ static void printf_wrapper(const char *fmt, ...) {
 float vertices[5 * 36 * 1000 * 50]; // space for 50k cubes
 WorldBuilder builder = { vertices, 0, sizeof(vertices) / sizeof(float) };
 
+
+float height_func(float x, float z) {
+    return 2.0f * sinf(x * 0.2f) + 0.6f * cosf(x * 0.8f) +
+           2.0f * cosf(z * 0.2f) + 0.6f * sinf(z * 0.8f);
+}
+
 void create_world(float t) {
     world_builder_init(&builder, vertices, sizeof(vertices) / sizeof(float));
-    float y = -2.0f; 
-     for (int x = -30; x < 30; x++) {
-            for (int z = -30; z < 30; z++) {
-                float cy =  cos(x * 0.15f + t * 0.0013f) * 2.0f + sin(z * 0.15f + t * 0.001f) * 2.0f;
-                vec3 center = { x * 1.0f, y * 1.0f + 2.0f * cy - 2.0f, z * 1.0f };
-                int t = abs(x + z) % 3;//rand() % 6;
-                world_builder_add_cube(&builder, center, 1.0f, t, t, t, t, t, t);
-            }
-    }
-   for (int x = -30; x < 30; x++) {
-            for (int z = -30; z < 30; z++) {
-                float cy = sin(x * 0.05f + t * 0.0012f) * 2.0f + cos(z * 0.05f + t * 0.0011f) * 2.0f;
-                vec3 center = { x * 1.0f, y * 1.0f + 2.0f * cy - 2.0f, z * 1.0f };
-                int t = 3 + abs(x + z) % 3;//rand() % 6;
-                world_builder_add_cube(&builder, center, 1.0f, t, t, t, t, t, t);
-            }
-    }
+    world_builder_heightmap(&builder, 40.0f, 40.0f, 1.0f, height_func);
+
+    // for (float z = -20; z < 20; z++) {
+    //     for (float x = -20; x < 20; x++) {
+    //         float y = sin(x * 0.1f + t * 0.001f) * 2.0f + cos(z * 0.1f + t * 0.0012f) * 2.0f;
+    //         vec3 center = { x * 1.0f, y * 1.0f - 2.0f, z * 1.0f };
+    //         int t = abs((int)x + (int)z) % 3;//rand() % 6;
+    //         world_builder_add_quad(&builder, center, (vec3){1.0f, 0.0f, 0.0f}, (vec3){0.0f, 0.0f, 1.0f}, t);
+    //     }
+    // }
+    //
+    
+//     float y = -2.0f; 
+//      for (int x = -30; x < 30; x++) {
+//             for (int z = -30; z < 30; z++) {
+//                 float cy =  cos(x * 0.15f + t * 0.0013f) * 2.0f + sin(z * 0.15f + t * 0.001f) * 2.0f;
+//                 vec3 center = { x * 1.0f, y * 1.0f + 2.0f * cy - 2.0f, z * 1.0f };
+//                 int t = abs(x + z) % 3;//rand() % 6;
+//                 world_builder_add_cube(&builder, center, 1.0f, t, t, t, t, t, t);
+//             }
+//     }
+//    for (int x = -30; x < 30; x++) {
+//             for (int z = -30; z < 30; z++) {
+//                 float cy = sin(x * 0.05f + t * 0.0012f) * 2.0f + cos(z * 0.05f + t * 0.0011f) * 2.0f;
+//                 vec3 center = { x * 1.0f, y * 1.0f + 2.0f * cy - 2.0f, z * 1.0f };
+//                 int t = 3 + abs(x + z) % 3;//rand() % 6;
+//                 world_builder_add_cube(&builder, center, 1.0f, t, t, t, t, t, t);
+//             }
+//     }
 }
 
 

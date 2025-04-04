@@ -29,6 +29,7 @@ void world_builder_add_quad(
 );
 
 size_t world_builder_get_vertex_count(const WorldBuilder* builder);
+
 void world_builder_add_cube(
     WorldBuilder* builder,
     vec3 center,
@@ -40,4 +41,9 @@ void world_builder_add_cube(
     uint16_t top_tile,
     uint16_t bottom_tile
 );
+
+typedef float (*Heightmap_Func)(float x, float z);
+
+void world_builder_heightmap(WorldBuilder* builder, float width, float depth, float tileSize, Heightmap_Func heightmap_func);
+
 #endif // WORLD_BUILDER_H

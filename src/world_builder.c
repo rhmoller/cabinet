@@ -117,4 +117,38 @@ void world_builder_add_cube(
         (vec3){size, 0, 0}, (vec3){0, 0, -size}, bottom_tile);
 }
 
+void world_builder_heightmap(WorldBuilder* builder, float width, float depth, float tileSize, Heightmap_Func heightmap_func) {
+    float half_width = width * 0.5f;
+    float half_depth = depth * 0.5f;
+    for (float x = 0; x < width; x+= tileSize) {
+        for (float z = 0; z < depth; z+= tileSize) {
+            float x1 = x * tileSize - half_width;
+            float z1 = z * tileSize - half_depth;
+            float x2 = x1 + tileSize;
+            float z2 = z1 + tileSize;
+
+            int tileIdx = heightmap_func(x1, z1) < 0.0f ? 5 : 11;
+            float tile_x = (float)(tileIdx % TILE_COUNT_X);
+            float tile_y = floor(tileIdx / (float)TILE_COUNT_X);
+            float u0 = (tile_x * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
+            float v0 = (tile_y * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
+            float u1 = ((tile_x + 1) * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
+            float v1 = ((tile_y + 1) * TILE_SIZE) / TEXTURE_ATLAS_SIZE;
+
+           vec3 coords[4] = {
+                { x1, heightmap_func(x1, z1), z1 },
+                { x2, heightmap_func(x2, z1), z1 },
+                { x2, heightmap_func(x2, z2), z2 },
+                { x1, heightmap_func(x1, z2), z2 }
+            };
+            add_vertex(builder, coords[0], u0, v0);
+            add_vertex(builder, coords[1], u1, v0);
+            add_vertex(builder, coords[2], u1, v1);
+
+            add_vertex(builder, coords[2], u1, v1);
+            add_vertex(builder, coords[3], u0, v1);
+            add_vertex(builder, coords[0], u0, v0);
+        }
+    }
+}
 
