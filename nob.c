@@ -6,6 +6,7 @@
 #include "nob.h"
 
 #define SRC_DIR "src"
+#define ASSETS_DIR "assets"
 #define DEMOS_DIR "demos"
 #define BUILD_DIR "build"
 #define INCLUDE_DIR "deps"
@@ -64,7 +65,7 @@ void init_shdc(Nob_Cmd *cmd) {
         "tools/linux/sokol-shdc",                    // Shader compiler
         "--input", "demos/ex01-triangle/triangle.glsl",
         "--output", "demos/ex01-triangle/triangle.glsl.h",
-        "-l", "hlsl5:glsl430",           // Language
+        "-l", "hlsl5:glsl430:glsl300es",           // Language
         //"-l", "glsl300es",           // Language
    );
 }
@@ -113,6 +114,18 @@ int main(int argc, char **argv) {
     init_clang(&cmd);
     nob_cmd_append(&cmd, "-o", BUILD_DIR"/ex01");
     nob_cmd_append(&cmd, "-D", "SOKOL_GLCORE");
+    nob_cmd_append(&cmd, DEMOS_DIR"/ex01-triangle/ex01-triangle.c");
+    nob_cmd_run_sync_and_reset(&cmd);
+
+    init_emcc(&cmd);
+    nob_cmd_append(&cmd, "--shell-file", ASSETS_DIR"/shell.html");
+    nob_cmd_append(&cmd,
+        "-I", INCLUDE_DIR,         // Include directory
+        "-I", DEMOS_DIR,           // Include directory
+        "-I", SRC_DIR,             // Include directory
+    );
+ 
+    nob_cmd_append(&cmd, "-o", BUILD_DIR"/ex01.html");
     nob_cmd_append(&cmd, DEMOS_DIR"/ex01-triangle/ex01-triangle.c");
     nob_cmd_run_sync_and_reset(&cmd);
 

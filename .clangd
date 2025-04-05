@@ -1,0 +1,7 @@
+CompileFlags:
+  Add: 
+    - "-I/home/rhm/project/cabinet/include"       # Local includes
+    - "-I/home/rhm/project/cabinet/deps"          # Third-party deps
+    - "-isystem/usr/local/include"                # System headers
+Diagnostics:
+  ClangTidy: { Checks: "performance-*,bug-*" }
