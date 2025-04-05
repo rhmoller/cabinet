@@ -1,34 +1,22 @@
+/*
+ * Build script based on Nob https://github.com/tsoding/nob.h
+ */
+
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
 #define SRC_DIR "src"
+#define DEMOS_DIR "demos"
 #define BUILD_DIR "build"
+#define INCLUDE_DIR "deps"
+
 #define WASM_BUILD_DIR "glue/wasm"
 #define NATIVE_BUILD_DIR "build/native"
-
-void init_clang_wasm(Nob_Cmd *cmd, const char *output_wasm) {
-    nob_cmd_append(cmd,
-        "/usr/bin/clang",                    // Emscripten compiler
-        "-target", "wasm32", // Target WebAssembly
-        "-std=c23",               // C23 standard
-        "-nostdlib",              // No standard library
-        "-mbulk-memory",          // Bulk memory operations
-        "-Wall", "-Wextra",       // Warnings
-        "-O2",                    // Optimize for performance
-        "-Iinclude",              // Include directory for cglm, cgltf
-        "-Isrc",
-        "-Wl,--export-all",       // Export all functions
-        "-Wl,--no-entry",         // No entry point
-        "-Wl,--allow-undefined",  // Allow undefined symbols (implemented in JS land)
-        "-o", output_wasm,        // Output WebAssembly
-    );
-}
 
 void init_emcc(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "emcc",                    // Emscripten compiler
         "-std=c23",               // C standard
-        "-o", "public/tiny.js",
         "-O0",                    // Optimize for size
         "-s", "BINARYEN=0",        // Disable Binaryen
         "-s", "WASM=1",               // Output WebAssembly,
@@ -47,21 +35,38 @@ void init_emcc(Nob_Cmd *cmd) {
     );
 }
 
-void init_clang_native(Nob_Cmd *cmd, const char *output_exe) {
+void init_clang(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
-        "clang",                  // Clang compiler
-        "-std=c23",               // C23 standard
-        "-Wall", "-Wextra",       // Warnings
-        "-O2",                    // Optimize for performance
-        "-Iinclude",              // Include directory for cglm, cgltf
-        "-Isrc",
-        // "-lopengl32",             // Link OpenGL on Windows
-        "-lGL",                   // Link OpenGL on Linux
-        "-lglfw",                 // Link GLFW
-        "-lm",                    // Link math library
-        "-DNATIVE",               // Define NATIVE
-        "-o", output_exe          // Output executable
+        "clang",                    // Clang compiler
+        "-std=c23",               // C standard
+        "-g",                     // Debug symbols
+        "-Wall",                  // Enable all warnings
+        "-Wextra",                // Enable extra warnings
+        "-Wpedantic",             // Enable pedantic warnings
+        "-Werror",                // Treat warnings as errors
+        "-Wno-missing-field-initializers", // Ignore missing field initializers
+        "-pthread",             // Enable pthread
+        "-lGL",                // Link against OpenGL
+        "-ldl",               // Link against dl
+        "-lm",
+        "-lX11",
+        "-lasound",
+        "-lXi",
+        "-lXcursor",
+        "-I", INCLUDE_DIR,         // Include directory
+        "-I", DEMOS_DIR,           // Include directory
+        "-I", SRC_DIR,             // Include directory
     );
+}
+
+void init_shdc(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "tools/linux/sokol-shdc",                    // Shader compiler
+        "--input", "demos/ex01-triangle/triangle.glsl",
+        "--output", "demos/ex01-triangle/triangle.glsl.h",
+        "-l", "hlsl5:glsl430",           // Language
+        //"-l", "glsl300es",           // Language
+   );
 }
 
 // Collect all .c files from src/ into a Nob_File_Paths
@@ -96,20 +101,38 @@ bool collect_c_files(Nob_File_Paths *c_files, Nob_File_Paths *h_files) {
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
-    Nob_Cmd cmd = {0};
-    //nob_cmd_append(&cmd, "bear", "--");
-    init_emcc(&cmd);
-    Nob_File_Paths c_files = {0};
-    Nob_File_Paths h_files = {0};
-    if (!collect_c_files(&c_files, &h_files)) {
+    if (!nob_mkdir_if_not_exists(BUILD_DIR)) {
+        nob_log(NOB_ERROR, "Failed to create build directory");
         return 1;
     }
 
-    for (size_t i = 0; i < c_files.count; i++) {
-        nob_cmd_append(&cmd, c_files.items[i]);
-    }
+    Nob_Cmd cmd = {};
+    init_shdc(&cmd);
     nob_cmd_run_sync_and_reset(&cmd);
 
+    init_clang(&cmd);
+    nob_cmd_append(&cmd, "-o", BUILD_DIR"/ex01");
+    nob_cmd_append(&cmd, "-D", "SOKOL_GLCORE");
+    nob_cmd_append(&cmd, DEMOS_DIR"/ex01-triangle/ex01-triangle.c");
+    nob_cmd_run_sync_and_reset(&cmd);
+
+    // Nob_Cmd cmd = {0};
+    // //nob_cmd_append(&cmd, "bear", "--");
+    // init_emcc(&cmd);
+    // // "-o", "public/tiny.js",
+    //
+    //
+    // Nob_File_Paths c_files = {0};
+    // Nob_File_Paths h_files = {0};
+    // if (!collect_c_files(&c_files, &h_files)) {
+    //     return 1;
+    // }
+    //
+    // for (size_t i = 0; i < c_files.count; i++) {
+    //     nob_cmd_append(&cmd, c_files.items[i]);
+    // }
+    // nob_cmd_run_sync_and_reset(&cmd);
+    //
 /*
   Nob_File_Paths c_files = {0};
   Nob_File_Paths h_files = {0};
