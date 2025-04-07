@@ -27,7 +27,7 @@ const char *build_dir = "build";
     #define OBJ_EXT ".o"
     #define STATIC_LIB_EXT ".a"
     #define EXE_EXT ""
-    const char *common_cflags[] = {"-std=c23", "-pthread","-Wall", "-Wextra", "-pedantic", "-Wno-missing-field-initializers" ,"-ggdb", "-I.", "-Ideps", "-DSOKOL_GLCORE"}; // Added -I. to include from root
+    const char *common_cflags[] = {"-std=c23", "-pthread","-Wall", "-Wextra", "-pedantic", "-Wno-missing-field-initializers" ,"-ggdb", "-I.", "-Ideps", "-Ideps/lua/src", "-DSOKOL_GLCORE"}; // Added -I. to include from root
     const char *common_ldflags[] = {"-lm", "-lGL", "-ldl", "-lX11", "-lXi", "-lXcursor", "-lasound"}; // Link math library by default
     const char *common_libs[] = {}; // Add libs like -lglfw, -lvulkan if needed globally
 #endif
@@ -315,11 +315,90 @@ void print_usage(const char *program_name) {
     // Add more options if needed
 }
 
+void clean_dir(const char *path) {
+    Nob_File_Paths dirents = {0};
+
+    if (!nob_read_entire_dir(path, &dirents)) {
+        nob_log(NOB_ERROR, "Failed to read build directory: %s", path);
+        return;
+    }
+
+    for (size_t i = 0; i < dirents.count; ++i) {
+        const char *entry_path = dirents.items[i];
+        if (strcmp(entry_path, ".") == 0 || strcmp(entry_path, "..") == 0) {
+            continue; // Skip special dirs
+        }
+        nob_delete_file(entry_path); // Delete files and directories
+    }
+
+    nob_da_free(dirents); // Free directory listing
+}
+
+bool collect_modules(const char *root, BuildTargets *modules, bool is_exe) {
+    Nob_File_Paths module_paths = {0};
+    if (!nob_read_entire_dir(root, &module_paths)) {
+        return false;
+    }
+    for (size_t i = 0; i < module_paths.count; ++i) {
+        const char *entry_name = module_paths.items[i];
+        if (strcmp(entry_name, ".") == 0 || strcmp(entry_name, "..") == 0) {
+            continue; // Skip special dirs
+        }
+
+        const char *entry_path = nob_temp_sprintf("%s/%s", root, entry_name); // Uses temp allocator
+        if (nob_get_file_type(entry_path) == NOB_FILE_DIRECTORY) {
+            const char *module_txt_path = nob_temp_sprintf("%s/module.txt", entry_path);
+            if (nob_file_exists(module_txt_path) == 1) {
+                // Found a module directory
+                nob_log(NOB_INFO, "Found module: %s", entry_name);
+                BuildTarget module = {0};
+                module.name = nob_temp_strdup(entry_name); // Persistent copy needed
+                module.dir_path = nob_temp_strdup(entry_path); // Persistent copy needed
+                module.is_executable = is_exe;
+                module.build_subdir = nob_temp_sprintf("%s/%s", build_dir, module.name);
+                char *ext = is_exe ? EXE_EXT : STATIC_LIB_EXT;
+                module.target_path = nob_temp_sprintf("%s/%s%s", module.build_subdir, module.name, ext);
+                
+                if (!parse_module_txt(module.dir_path, &module.src_files)) {
+                    nob_log(NOB_ERROR, "Failed to parse module.txt for %s", module.name);
+                    return false;
+                }
+
+                if (module.src_files.count == 0) {
+                    nob_log(NOB_WARNING, "Module %s has no source files listed in module.txt. Skipping.", module.name);
+                    // Free allocated strings for this skipped module
+                    // Need careful temp allocator rewinding or heap allocation for names/paths
+                    // Let's assume temp allocation works if managed carefully in main scope
+                    continue;
+                }
+
+                // Determine object file paths
+                for (size_t j = 0; j < module.src_files.count; ++j) {
+                    const char *src_file_path = module.src_files.items[j];
+                    const char *src_file_name = nob_path_name(src_file_path); // Get "file.c"
+                    const char *obj_file_name = nob_temp_sprintf("%.*s%s", (int)strlen(src_file_name) - 2, src_file_name, OBJ_EXT); // Replace .c with .obj/.o
+                    const char *obj_file_path = nob_temp_sprintf("%s/%s", module.build_subdir, obj_file_name);
+                    nob_da_append(&module.obj_files, nob_temp_strdup(obj_file_path)); // Persistent copy
+                }
+
+                nob_da_append(modules, module); // Append the module to the list
+            }
+        }
+    } 
+    nob_da_free(module_paths); // Free the list of module paths
+    return true;
+}
+
+
 
 // --- Main Build Logic ---
 
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
+
+    // TODO: Extract the steps into functions for better organization
+    // TODO: Detect modules in deps
+    // TODO: Configure include dirs based on deps
 
     const char *program_name = nob_shift_args(&argc, &argv); // Get program name (nob)
 
@@ -360,31 +439,10 @@ int main(int argc, char **argv) {
     // --- Clean Build ---
     if (clean_build) {
         nob_log(NOB_INFO, "Cleaning build directory: %s", build_dir);
-        // nob.h doesn't have recursive directory deletion, use system commands or do it manually
-        // For simplicity, we'll just delete the directory if it exists.
-        // This requires a more robust deletion function for cross-platform.
-        // Let's use a simple `rm -rf` or `rd /s /q` for now.
-        Nob_Cmd clean_cmd = {0};
-#ifdef _WIN32
-        if (nob_get_file_type(build_dir) == NOB_FILE_DIRECTORY) {
-             nob_cmd_append(&clean_cmd, "cmd", "/c", "rd", "/s", "/q", build_dir);
-        }
-#else
-        if (nob_get_file_type(build_dir) == NOB_FILE_DIRECTORY) {
-            nob_cmd_append(&clean_cmd, "rm", "-rf", build_dir);
-        }
-#endif
-        if (clean_cmd.count > 0) {
-            if (!nob_cmd_run_sync_and_reset(&clean_cmd)) {
-                 nob_log(NOB_WARNING, "Failed to clean build directory (maybe it didn't exist).");
-                 // Don't treat failure to clean as critical error
-            }
-        }
-        nob_cmd_free(clean_cmd);
+        clean_dir(build_dir); // Clean the build directory
         nob_log(NOB_INFO, "Clean finished.");
         return 0; // Exit after cleaning
     }
-
 
     // --- Setup Build Environment ---
     if (!nob_mkdir_if_not_exists(build_dir)) return 1;
@@ -399,103 +457,12 @@ int main(int argc, char **argv) {
 
     // Discover Modules (subdirs in root with module.txt)
     nob_log(NOB_INFO, "--- Discovering Modules ---");
-    if (!nob_read_entire_dir(modules_dir, &root_dirents)) return 1;
-
-    for (size_t i = 0; i < root_dirents.count; ++i) {
-        const char *entry_name = root_dirents.items[i];
-        if (strcmp(entry_name, ".") == 0 || strcmp(entry_name, "..") == 0 || strcmp(entry_name, build_dir) == 0 || strcmp(entry_name, demos_dir) == 0) {
-            continue; // Skip special dirs, build dir, demos dir
-        }
-
-        const char *entry_path = nob_temp_sprintf("%s/%s", modules_dir, entry_name); // Uses temp allocator
-        if (nob_get_file_type(entry_path) == NOB_FILE_DIRECTORY) {
-            const char *module_txt_path = nob_temp_sprintf("%s/module.txt", entry_path);
-            if (nob_file_exists(module_txt_path) == 1) {
-                nob_log(NOB_INFO, "Found module: %s", entry_name);
-                BuildTarget module = {0};
-                module.name = nob_temp_strdup(entry_name); // Persistent copy needed
-                module.dir_path = nob_temp_strdup(entry_path); // Persistent copy needed
-                module.is_executable = false;
-                module.build_subdir = nob_temp_sprintf("%s/%s", build_dir, module.name);
-                module.target_path = nob_temp_sprintf("%s/%s%s", module.build_subdir, module.name, STATIC_LIB_EXT);
-
-                if (!parse_module_txt(module.dir_path, &module.src_files)) {
-                    nob_log(NOB_ERROR, "Failed to parse module.txt for %s", module.name);
-                    // TODO: Proper cleanup of partially allocated module data
-                    return 1;
-                }
-
-                if (module.src_files.count == 0) {
-                     nob_log(NOB_WARNING, "Module %s has no source files listed in module.txt. Skipping.", module.name);
-                     // Free allocated strings for this skipped module
-                     // Need careful temp allocator rewinding or heap allocation for names/paths
-                     // Let's assume temp allocation works if managed carefully in main scope
-                     continue;
-                }
-
-                 // Determine object file paths
-                for(size_t j = 0; j < module.src_files.count; ++j) {
-                    const char* src_file_path = module.src_files.items[j];
-                    const char* src_file_name = nob_path_name(src_file_path); // Get "file.c"
-                    const char* obj_file_name = nob_temp_sprintf("%.*s%s", (int)strlen(src_file_name) - 2, src_file_name, OBJ_EXT); // Replace .c with .obj/.o
-                    const char* obj_file_path = nob_temp_sprintf("%s/%s", module.build_subdir, obj_file_name);
-                    nob_da_append(&module.obj_files, nob_temp_strdup(obj_file_path)); // Persistent copy
-                }
-
-                nob_da_append(&modules, module);
-            }
-        }
-    }
-    nob_da_free(root_dirents); // Free directory listing
+    collect_modules(deps_dir, &modules, false); // Collect modules from the deps directory
+    collect_modules(modules_dir, &modules, false); // Collect modules from the modules directory
 
     // Discover Demos (subdirs in demos/)
     nob_log(NOB_INFO, "--- Discovering Demos ---");
-    if (nob_get_file_type(demos_dir) == NOB_FILE_DIRECTORY) {
-        if (!nob_read_entire_dir(demos_dir, &demo_dirents)) return 1;
-
-        for (size_t i = 0; i < demo_dirents.count; ++i) {
-            const char *entry_name = demo_dirents.items[i];
-             if (strcmp(entry_name, ".") == 0 || strcmp(entry_name, "..") == 0) {
-                continue;
-            }
-            const char *entry_path = nob_temp_sprintf("%s/%s", demos_dir, entry_name);
-            if (nob_get_file_type(entry_path) == NOB_FILE_DIRECTORY) {
-                 nob_log(NOB_INFO, "Found demo: %s", entry_name);
-                 BuildTarget demo = {0};
-                 demo.name = nob_temp_strdup(entry_name);
-                 demo.dir_path = nob_temp_strdup(entry_path);
-                 demo.is_executable = true;
-                 demo.build_subdir = nob_temp_sprintf("%s/%s", build_dir, demo.name);
-                 demo.target_path = nob_temp_sprintf("%s/%s%s", demo.build_subdir, demo.name, EXE_EXT);
-
-                 // Find source files recursively
-                 if (!find_files_recursive(demo.dir_path, ".c", &demo.src_files)) {
-                      nob_log(NOB_ERROR, "Failed to find source files for demo %s", demo.name);
-                      // TODO: Cleanup
-                      return 1;
-                 }
-
-                 if (demo.src_files.count == 0) {
-                    nob_log(NOB_WARNING, "Demo %s has no .c source files. Skipping.", demo.name);
-                    continue;
-                 }
-
-                  // Determine object file paths
-                 for(size_t j = 0; j < demo.src_files.count; ++j) {
-                    const char* src_file_path = demo.src_files.items[j];
-                    const char* src_file_name = nob_path_name(src_file_path);
-                    const char* obj_file_name = nob_temp_sprintf("%.*s%s", (int)strlen(src_file_name) - 2, src_file_name, OBJ_EXT);
-                    const char* obj_file_path = nob_temp_sprintf("%s/%s", demo.build_subdir, obj_file_name);
-                    nob_da_append(&demo.obj_files, nob_temp_strdup(obj_file_path));
-                }
-
-                 nob_da_append(&demos, demo);
-            }
-        }
-        nob_da_free(demo_dirents);
-    } else {
-        nob_log(NOB_WARNING, "Demos directory '%s' not found or is not a directory.", demos_dir);
-    }
+    collect_modules(demos_dir, &demos, true); // Collect demos from the demos directory
 
     // --- Build Phase ---
 
@@ -503,6 +470,8 @@ int main(int argc, char **argv) {
     nob_log(NOB_INFO, "--- Building Modules ---");
     for (size_t i = 0; i < modules.count; ++i) {
         BuildTarget *module = &modules.items[i];
+
+        //build_module(module);
         nob_log(NOB_INFO, "Building module: %s", module->name);
         if (!nob_mkdir_if_not_exists(module->build_subdir)) return 1;
 
@@ -553,7 +522,6 @@ int main(int argc, char **argv) {
             return 1; // Abort build
         }
     }
-
 
     // --- Cleanup ---
     // Free dynamically allocated data within targets (src_files, obj_files arrays)
