@@ -3,8 +3,6 @@
 #include "nob.h"
 #include <time.h>
 
-// --- Configuration ---
-
 const char *compiler_path;
 const char *archiver_path;
 
@@ -13,6 +11,27 @@ const char *modules_dir = "modules";
 const char *deps_dir = "deps";
 
 const char *build_dir = "build";
+
+// Helper struct to manage build targets (modules/demos)
+typedef struct {
+    const char *name;         // Module or name (usually the directory name)
+    const char *dir_path;     // Path to the module source directory
+    Nob_File_Paths src_files; // Full paths to source files (.c)
+    Nob_File_Paths obj_files; // Full paths to object files in build dir
+    const char *target_path;  // Full path to the final library or executable in
+                              // build dir
+    const char
+        *build_subdir;  // Path to the specific subdirectory within build_dir
+    bool is_executable; // True if it's a demo (executable), false if module
+                        // (library)
+} BuildTarget;
+
+// Dynamic array of BuildTargets
+typedef struct {
+    BuildTarget *items;
+    size_t count;
+    size_t capacity;
+} BuildTargets;
 
 // Define common flags - adjust as needed
 #ifdef _WIN32
@@ -27,30 +46,196 @@ const char *build_dir = "build";
     #define OBJ_EXT ".o"
     #define STATIC_LIB_EXT ".a"
     #define EXE_EXT ""
-    const char *common_cflags[] = {"-std=c23", "-pthread","-Wall", "-Wextra", "-pedantic", "-Wno-missing-field-initializers" ,"-ggdb", "-I.", "-Ideps", "-Ideps/lua/src", "-DSOKOL_GLCORE"}; // Added -I. to include from root
+    const char *common_cflags[] = {"-std=c23", "-pthread","-Wall", "-Wextra", "-pedantic", "-Wno-missing-field-initializers" ,"-ggdb", "-I.", "-Ideps", "-Ideps/lua/src", "-Imodules/baselib", "-DSOKOL_GLCORE"}; // Added -I. to include from root
     const char *common_ldflags[] = {"-lm", "-lGL", "-ldl", "-lX11", "-lXi", "-lXcursor", "-lasound"}; // Link math library by default
     const char *common_libs[] = {}; // Add libs like -lglfw, -lvulkan if needed globally
 #endif
 
-// Helper struct to manage build targets (modules/demos)
-typedef struct {
-    const char *name;         // Module or name (usually the directory name)
-    const char *dir_path;     // Path to the module source directory
-    Nob_File_Paths src_files; // Full paths to source files (.c)
-    Nob_File_Paths obj_files; // Full paths to object files in build dir
-    const char *target_path;  // Full path to the final library or executable in build dir
-    const char *build_subdir; // Path to the specific subdirectory within build_dir
-    bool is_executable;       // True if it's a demo (executable), false if module (library)
-} BuildTarget;
+void print_usage(const char *program_name);
+void clean_dir(const char *path);
+bool collect_modules(const char *root, BuildTargets *modules, bool is_exe);
+bool compile_object_file(const char *src_path, const char *obj_path,
+                        const char *target_include_dir);
+bool build_static_library(BuildTarget *target);
+bool build_executable(BuildTarget *target,
+                        Nob_File_Paths *module_lib_paths);
+bool parse_module(const char *module_dir_path);
+ 
+int main(int argc, char **argv) {
+    NOB_GO_REBUILD_URSELF(argc, argv);
 
-// Dynamic array of BuildTargets
-typedef struct {
-    BuildTarget *items;
-    size_t count;
-    size_t capacity;
-} BuildTargets;
+    const char *program_name = nob_shift_args(&argc, &argv); // Get program name (nob)
+
+    if (!nob_mkdir_if_not_exists(build_dir)) {
+        nob_log(NOB_ERROR, "Failed to create build directory: %s", build_dir);
+        return 1;
+    }
+
+    // --- Argument Parsing ---
+    bool clean_build = false;
+    bool test_build = false;
+
+    while (argc > 0) {
+        const char *arg = nob_shift_args(&argc, &argv);
+        if (strcmp(arg, "clean") == 0) {
+            clean_build = true;
+        } else if (strcmp(arg, "test") == 0) {
+            test_build = true;
+        } else {
+            print_usage(program_name);
+            nob_log(NOB_ERROR, "Unknown argument: %s", arg);
+            return 1;
+        }
+    }
+
+    if (test_build) {
+        parse_module("deps/lua");
+        return 0;
+    }
+
+
+    // --- Set Platform Specific Tools ---
+#ifdef _WIN32
+    compiler_path = "cl.exe";
+    archiver_path = "lib.exe";
+    // Ensure cl.exe and lib.exe are in PATH (e.g., by running from VS Developer Command Prompt)
+#else
+    // Try clang first, fallback to gcc/ar
+    if (nob_file_exists("/usr/bin/clang")) {
+        compiler_path = "clang";
+        archiver_path = "ar";
+    } else if (nob_file_exists("/usr/bin/gcc")) {
+        compiler_path = "gcc";
+        archiver_path = "ar";
+    } else {
+        nob_log(NOB_ERROR, "Could not find a suitable C compiler (clang or gcc). Please install one.");
+        return 1;
+    }
+    nob_log(NOB_INFO, "Using compiler: %s", compiler_path);
+#endif
+    
+        // --- Clean Build ---
+    if (clean_build) {
+        nob_log(NOB_INFO, "Cleaning build directory: %s", build_dir);
+        clean_dir(build_dir); // Clean the build directory
+        nob_log(NOB_INFO, "Clean finished.");
+        return 0; // Exit after cleaning
+    }
+
+    // --- Setup Build Environment ---
+    if (!nob_mkdir_if_not_exists(build_dir)) return 1;
+
+    // --- Discover Build Targets ---
+    BuildTargets modules = {0};
+    BuildTargets demos = {0};
+    Nob_File_Paths root_dirents = {0};
+    Nob_File_Paths demo_dirents = {0};
+    Nob_File_Paths module_lib_paths = {0}; // To store paths of built static libs
+
+    // Discover Modules (subdirs in root with module.txt)
+    nob_log(NOB_INFO, "--- Discovering Modules ---");
+    collect_modules(deps_dir, &modules, false); // Collect modules from the deps directory
+    collect_modules(modules_dir, &modules, false); // Collect modules from the modules directory
+
+    // Discover Demos (subdirs in demos/)
+    nob_log(NOB_INFO, "--- Discovering Demos ---");
+    collect_modules(demos_dir, &demos, true); // Collect demos from the demos directory
+
+    // --- Build Phase ---
+
+    // Build Modules (Static Libraries)
+    nob_log(NOB_INFO, "--- Building Modules ---");
+    for (size_t i = 0; i < modules.count; ++i) {
+        BuildTarget *module = &modules.items[i];
+
+        //build_module(module);
+        nob_log(NOB_INFO, "Building module: %s", module->name);
+        if (!nob_mkdir_if_not_exists(module->build_subdir)) return 1;
+
+        bool module_ok = true;
+        for (size_t j = 0; j < module->src_files.count; ++j) {
+            if (!compile_object_file(module->src_files.items[j], module->obj_files.items[j], module->dir_path)) {
+                module_ok = false;
+                break; // Stop compiling this module on first error
+            }
+        }
+
+        if (!module_ok) {
+            nob_log(NOB_ERROR, "Failed to compile all object files for module %s", module->name);
+            return 1; // Abort build
+        }
+
+        // Archive the library
+        if (!build_static_library(module)) {
+             nob_log(NOB_ERROR, "Failed to build static library for module %s", module->name);
+             return 1; // Abort build
+        }
+        nob_da_append(&module_lib_paths, module->target_path); // Add successful library to list for demos
+    }
+
+    // Build Demos (Executables)
+    nob_log(NOB_INFO, "--- Building Demos ---");
+     for (size_t i = 0; i < demos.count; ++i) {
+        BuildTarget *demo = &demos.items[i];
+        nob_log(NOB_INFO, "Building demo: %s", demo->name);
+         if (!nob_mkdir_if_not_exists(demo->build_subdir)) return 1;
+
+        bool demo_ok = true;
+        for (size_t j = 0; j < demo->src_files.count; ++j) {
+             if (!compile_object_file(demo->src_files.items[j], demo->obj_files.items[j], demo->dir_path)) {
+                demo_ok = false;
+                break;
+            }
+        }
+
+         if (!demo_ok) {
+            nob_log(NOB_ERROR, "Failed to compile all object files for demo %s", demo->name);
+            return 1; // Abort build
+        }
+
+        // Link the executable
+        if (!build_executable(demo, &module_lib_paths)) {
+            nob_log(NOB_ERROR, "Failed to link executable for demo %s", demo->name);
+            return 1; // Abort build
+        }
+    }
+
+    // --- Cleanup ---
+    // Free dynamically allocated data within targets (src_files, obj_files arrays)
+    // Note: The strings *inside* these arrays were allocated with temp_strdup.
+    // If temp allocator was reset/rewound, these pointers might be invalid.
+    // If main() managed the temp allocator correctly (only rewinding locally), it might be okay.
+    // For robustness, consider using heap allocation (malloc/free) for paths stored in BuildTarget,
+    // or a dedicated arena allocator.
+    for (size_t i = 0; i < modules.count; ++i) {
+        nob_da_free(modules.items[i].src_files);
+        nob_da_free(modules.items[i].obj_files);
+    }
+    nob_da_free(modules); // Free the array of modules itself
+
+    for (size_t i = 0; i < demos.count; ++i) {
+        nob_da_free(demos.items[i].src_files);
+        nob_da_free(demos.items[i].obj_files);
+    }
+    nob_da_free(demos); // Free the array of demos itself
+
+    nob_da_free(module_lib_paths); // Free the list of library paths
+
+    // Temp allocator is implicitly reset on exit, but explicit reset is good practice if needed
+    // nob_temp_reset();
+
+    nob_log(NOB_INFO, "Build finished successfully!");
+    return 0;
+}
 
 // --- Helper Functions ---
+
+bool parse_module(const char *module_dir_path) {
+    nob_log(NOB_INFO, "Parsing module: %s", module_dir_path);
+    return true;
+}
+
+
 
 // Recursively find files with a specific extension in a directory
 bool find_files_recursive(const char *dir_path, const char *extension, Nob_File_Paths *result) {
@@ -74,14 +259,7 @@ bool find_files_recursive(const char *dir_path, const char *extension, Nob_File_
         switch (file_type) {
             case NOB_FILE_REGULAR:
                 if (nob_sv_end_with(nob_sv_from_cstr(child_name), extension)) {
-                    // We need a persistent copy of the path, temp allocator won't work
-                    // outside this function scope if not careful. Let's use malloc for simplicity here.
-                    // Alternatively, allocate all paths needed in main() using temp allocator
-                    // before calling functions that need them.
-                    // Using temp allocator carefully IS possible but more complex to manage lifetimes.
-                    // For robustness in build scripts, sometimes heap allocation is easier.
-                    // Let's try temp allocator first, assuming main manages its lifetime
-                    nob_da_append(result, nob_temp_strdup(child_path));
+                   nob_da_append(result, nob_temp_strdup(child_path));
                 }
                 break;
             case NOB_FILE_DIRECTORY:
@@ -105,7 +283,6 @@ defer:
     nob_da_free(children); // Free the list of child names (allocated by nob_read_entire_dir)
     return success;
 }
-
 
 // Parse module.txt to find source files relative to the module directory
 bool parse_module_txt(const char *module_dir_path, Nob_File_Paths *src_files) {
@@ -389,220 +566,4 @@ bool collect_modules(const char *root, BuildTargets *modules, bool is_exe) {
     return true;
 }
 
-
-
-// --- Main Build Logic ---
-
-int main(int argc, char **argv) {
-    NOB_GO_REBUILD_URSELF(argc, argv);
-
-    // TODO: Extract the steps into functions for better organization
-    // TODO: Detect modules in deps
-    // TODO: Configure include dirs based on deps
-
-    const char *program_name = nob_shift_args(&argc, &argv); // Get program name (nob)
-
-    // --- Argument Parsing ---
-    bool clean_build = false;
-    while (argc > 0) {
-        const char *arg = nob_shift_args(&argc, &argv);
-        if (strcmp(arg, "clean") == 0) {
-            clean_build = true;
-        } else {
-            print_usage(program_name);
-            nob_log(NOB_ERROR, "Unknown argument: %s", arg);
-            return 1;
-        }
-    }
-
-    // --- Set Platform Specific Tools ---
-#ifdef _WIN32
-    compiler_path = "cl.exe";
-    archiver_path = "lib.exe";
-    // Ensure cl.exe and lib.exe are in PATH (e.g., by running from VS Developer Command Prompt)
-#else
-    // Try clang first, fallback to gcc/ar
-    if (nob_file_exists("/usr/bin/clang")) {
-        compiler_path = "clang";
-        archiver_path = "ar";
-    } else if (nob_file_exists("/usr/bin/gcc")) {
-        compiler_path = "gcc";
-        archiver_path = "ar";
-    } else {
-        nob_log(NOB_ERROR, "Could not find a suitable C compiler (clang or gcc). Please install one.");
-        return 1;
-    }
-    nob_log(NOB_INFO, "Using compiler: %s", compiler_path);
-#endif
-
-
-    // --- Clean Build ---
-    if (clean_build) {
-        nob_log(NOB_INFO, "Cleaning build directory: %s", build_dir);
-        clean_dir(build_dir); // Clean the build directory
-        nob_log(NOB_INFO, "Clean finished.");
-        return 0; // Exit after cleaning
-    }
-
-    // --- Setup Build Environment ---
-    if (!nob_mkdir_if_not_exists(build_dir)) return 1;
-
-
-    // --- Discover Build Targets ---
-    BuildTargets modules = {0};
-    BuildTargets demos = {0};
-    Nob_File_Paths root_dirents = {0};
-    Nob_File_Paths demo_dirents = {0};
-    Nob_File_Paths module_lib_paths = {0}; // To store paths of built static libs
-
-    // Discover Modules (subdirs in root with module.txt)
-    nob_log(NOB_INFO, "--- Discovering Modules ---");
-    collect_modules(deps_dir, &modules, false); // Collect modules from the deps directory
-    collect_modules(modules_dir, &modules, false); // Collect modules from the modules directory
-
-    // Discover Demos (subdirs in demos/)
-    nob_log(NOB_INFO, "--- Discovering Demos ---");
-    collect_modules(demos_dir, &demos, true); // Collect demos from the demos directory
-
-    // --- Build Phase ---
-
-    // Build Modules (Static Libraries)
-    nob_log(NOB_INFO, "--- Building Modules ---");
-    for (size_t i = 0; i < modules.count; ++i) {
-        BuildTarget *module = &modules.items[i];
-
-        //build_module(module);
-        nob_log(NOB_INFO, "Building module: %s", module->name);
-        if (!nob_mkdir_if_not_exists(module->build_subdir)) return 1;
-
-        bool module_ok = true;
-        for (size_t j = 0; j < module->src_files.count; ++j) {
-            if (!compile_object_file(module->src_files.items[j], module->obj_files.items[j], module->dir_path)) {
-                module_ok = false;
-                break; // Stop compiling this module on first error
-            }
-        }
-
-        if (!module_ok) {
-            nob_log(NOB_ERROR, "Failed to compile all object files for module %s", module->name);
-            return 1; // Abort build
-        }
-
-        // Archive the library
-        if (!build_static_library(module)) {
-             nob_log(NOB_ERROR, "Failed to build static library for module %s", module->name);
-             return 1; // Abort build
-        }
-        nob_da_append(&module_lib_paths, module->target_path); // Add successful library to list for demos
-    }
-
-    // Build Demos (Executables)
-    nob_log(NOB_INFO, "--- Building Demos ---");
-     for (size_t i = 0; i < demos.count; ++i) {
-        BuildTarget *demo = &demos.items[i];
-        nob_log(NOB_INFO, "Building demo: %s", demo->name);
-         if (!nob_mkdir_if_not_exists(demo->build_subdir)) return 1;
-
-        bool demo_ok = true;
-        for (size_t j = 0; j < demo->src_files.count; ++j) {
-             if (!compile_object_file(demo->src_files.items[j], demo->obj_files.items[j], demo->dir_path)) {
-                demo_ok = false;
-                break;
-            }
-        }
-
-         if (!demo_ok) {
-            nob_log(NOB_ERROR, "Failed to compile all object files for demo %s", demo->name);
-            return 1; // Abort build
-        }
-
-        // Link the executable
-        if (!build_executable(demo, &module_lib_paths)) {
-            nob_log(NOB_ERROR, "Failed to link executable for demo %s", demo->name);
-            return 1; // Abort build
-        }
-    }
-
-    // --- Cleanup ---
-    // Free dynamically allocated data within targets (src_files, obj_files arrays)
-    // Note: The strings *inside* these arrays were allocated with temp_strdup.
-    // If temp allocator was reset/rewound, these pointers might be invalid.
-    // If main() managed the temp allocator correctly (only rewinding locally), it might be okay.
-    // For robustness, consider using heap allocation (malloc/free) for paths stored in BuildTarget,
-    // or a dedicated arena allocator.
-    for (size_t i = 0; i < modules.count; ++i) {
-        nob_da_free(modules.items[i].src_files);
-        nob_da_free(modules.items[i].obj_files);
-    }
-    nob_da_free(modules); // Free the array of modules itself
-
-    for (size_t i = 0; i < demos.count; ++i) {
-        nob_da_free(demos.items[i].src_files);
-        nob_da_free(demos.items[i].obj_files);
-    }
-    nob_da_free(demos); // Free the array of demos itself
-
-    nob_da_free(module_lib_paths); // Free the list of library paths
-
-    // Temp allocator is implicitly reset on exit, but explicit reset is good practice if needed
-    // nob_temp_reset();
-
-    nob_log(NOB_INFO, "Build finished successfully!");
-    return 0;
-}
-
-//--- old stuff --------------------------------------------------------------------------------
-
-void init_emcc(Nob_Cmd *cmd) {
-    nob_cmd_append(cmd,
-        "emcc",                    // Emscripten compiler
-        "-std=c23",               // C standard
-        "-O0",                    // Optimize for size
-        "-s", "BINARYEN=0",        // Disable Binaryen
-        "-s", "WASM=1",               // Output WebAssembly,
-        "-s", "ALLOW_MEMORY_GROWTH=0", // Allow memory growth
-        "-s", "MINIMAL_RUNTIME=0",     // Minimal runtime
-        "-s", "GL_UNSAFE_OPTS=1",        // Unsafe GL options
-        "-s", "ENVIRONMENT=web",        // Web environment
-        "-s", "USE_WEBGL2=1",         // Use WebGL 2
-        "-s", "MIN_WEBGL_VERSION=2", // Minimum WebGL version
-        "-s", "MAX_WEBGL_VERSION=2", // Maximum WebGL version
-        "-s", "USE_GLFW=0",         // Disable GLFW
-        "-s", "FILESYSTEM=0",         // Disable file system
-        "-s", "ASSERTIONS=0",         // Disable assertions
-        "-s", "TOTAL_MEMORY=256MB", // Total memory
-        "-D", "SOKOL_GLES3", // Use GLES3
-    );
-}
-
-void init_clang(Nob_Cmd *cmd) {
-    nob_cmd_append(cmd,
-        "clang",                    // Clang compiler
-        "-std=c23",               // C standard
-        "-g",                     // Debug symbols
-        "-Wall",                  // Enable all warnings
-        "-Wextra",                // Enable extra warnings
-        "-Wpedantic",             // Enable pedantic warnings
-        "-Werror",                // Treat warnings as errors
-        "-Wno-missing-field-initializers", // Ignore missing field initializers
-        "-pthread",             // Enable pthread
-        "-lGL",                // Link against OpenGL
-        "-ldl",               // Link against dl
-        "-lm",
-        "-lX11",
-        "-lasound",
-        "-lXi",
-        "-lXcursor",
-    );
-}
-
-void init_shdc(Nob_Cmd *cmd) {
-    nob_cmd_append(cmd,
-        "tools/linux/sokol-shdc",                    // Shader compiler
-        "--input", "demos/ex01-triangle/triangle.glsl",
-        "--output", "demos/ex01-triangle/triangle.glsl.h",
-        "-l", "hlsl5:glsl430:glsl300es",           // Language
-        //"-l", "glsl300es",           // Language
-   );
-}
 
