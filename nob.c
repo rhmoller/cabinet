@@ -46,8 +46,8 @@ typedef struct {
     #define OBJ_EXT ".o"
     #define STATIC_LIB_EXT ".a"
     #define EXE_EXT ""
-    const char *common_cflags[] = {"-std=c23", "-pthread","-Wall", "-Wextra", "-pedantic", "-Wno-missing-field-initializers" ,"-ggdb", "-I.", "-Ideps", "-Ideps/lua/src", "-Imodules/baselib", "-DSOKOL_GLCORE"}; // Added -I. to include from root
-    const char *common_ldflags[] = {"-lm", "-lGL", "-ldl", "-lX11", "-lXi", "-lXcursor", "-lasound"}; // Link math library by default
+    const char *common_cflags[] = {"-std=c23", "-pthread","-Wall", "-Wextra", "-pedantic", "-Wno-missing-field-initializers" ,"-ggdb", "-fsanitize=address","-I.", "-Ideps", "-Ideps/lua/src", "-Imodules/baselib", "-DSOKOL_GLCORE"}; // Added -I. to include from root
+    const char *common_ldflags[] = {"-fsanitize=address", "-lm", "-lGL", "-ldl", "-lX11", "-lXi", "-lXcursor", "-lasound"}; // Link math library by default
     const char *common_libs[] = {}; // Add libs like -lglfw, -lvulkan if needed globally
 #endif
 
@@ -60,7 +60,8 @@ bool build_static_library(BuildTarget *target);
 bool build_executable(BuildTarget *target,
                         Nob_File_Paths *module_lib_paths);
 bool parse_module(const char *module_dir_path);
- 
+bool rebuild();
+
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
@@ -72,15 +73,43 @@ int main(int argc, char **argv) {
     }
 
     // --- Argument Parsing ---
-    bool clean_build = false;
-    bool test_build = false;
-
     while (argc > 0) {
         const char *arg = nob_shift_args(&argc, &argv);
         if (strcmp(arg, "clean") == 0) {
-            clean_build = true;
-        } else if (strcmp(arg, "test") == 0) {
-            test_build = true;
+            clean_dir(build_dir); // Clean the build directory
+        } else if (strcmp(arg, "run") == 0) {
+            if (rebuild()) {
+                nob_log(NOB_ERROR, "Failed to rebuild before running.");
+                return 1;
+            }
+            nob_log(NOB_INFO, "--- Running Application ---");
+
+            const char *app_name = nob_shift_args(&argc, &argv);
+            if (app_name == NULL) {
+                print_usage(program_name);
+                nob_log(NOB_ERROR, "No application name provided for 'run'.");
+                return 1;
+            }
+            const char *app_folder = nob_temp_sprintf("%s/%s", build_dir, app_name);
+            if (!nob_file_exists(app_folder)) {
+                nob_log(NOB_ERROR, "Application %s not found in build directory.", app_name);
+                return 1;
+            }
+            nob_set_current_dir(app_folder);
+            if (!nob_file_exists(app_name)) {
+                nob_log(NOB_ERROR, "Executable %s not found in %s.", app_name, app_folder);
+                return 1;
+            }
+
+            Nob_Cmd cmd = {0};
+            const char *qualified_app_name = nob_temp_sprintf("./%s", app_name);
+            nob_log(NOB_INFO, "Running %s", qualified_app_name);
+            nob_cmd_append(&cmd, qualified_app_name);
+            if (!nob_cmd_run_sync_and_reset(&cmd)) {
+                nob_log(NOB_ERROR, "Failed to run %s", app_name);
+                return 1;
+            }
+            return 0; // Exit after running the app
         } else {
             print_usage(program_name);
             nob_log(NOB_ERROR, "Unknown argument: %s", arg);
@@ -88,12 +117,10 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (test_build) {
-        parse_module("deps/lua");
-        return 0;
-    }
+    return rebuild();
+}
 
-
+bool rebuild() {
     // --- Set Platform Specific Tools ---
 #ifdef _WIN32
     compiler_path = "cl.exe";
@@ -114,14 +141,6 @@ int main(int argc, char **argv) {
     nob_log(NOB_INFO, "Using compiler: %s", compiler_path);
 #endif
     
-        // --- Clean Build ---
-    if (clean_build) {
-        nob_log(NOB_INFO, "Cleaning build directory: %s", build_dir);
-        clean_dir(build_dir); // Clean the build directory
-        nob_log(NOB_INFO, "Clean finished.");
-        return 0; // Exit after cleaning
-    }
-
     // --- Setup Build Environment ---
     if (!nob_mkdir_if_not_exists(build_dir)) return 1;
 

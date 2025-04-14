@@ -1,4 +1,5 @@
 #include "arena.h"
+#include <stdio.h>
 #include <stdlib.h>
 
 Cab_Arena *cab_arena_create(int initial_capacity) {
