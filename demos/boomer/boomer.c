@@ -1,12 +1,14 @@
 #include "cabinet.h"
 
-void init(Cab_Cabinet* cabinet) {
+Cab_Cabinet cabinet = {};
+
+void init() {
 }
 
-void update(Cab_Cabinet* cabinet) {
+void update() {
 }
 
 sapp_desc sokol_main(int argc, char* argv[]) {
-    return cab_sokol_main(argc, argv, init, update);
+    return cab_sokol_main(argc, argv, &cabinet, init, update);
 }
 

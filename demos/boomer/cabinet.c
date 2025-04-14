@@ -17,8 +17,8 @@
 #include "world_builder.h"
 
 static struct {
-    void (*init_cb)(Cab_Cabinet *);
-    void (*update_cb)(Cab_Cabinet *);
+    void (*init_cb)();
+    void (*update_cb)();
 } globals;
 
 static struct {
@@ -221,8 +221,9 @@ void handle_event(const sapp_event *event) {
 }
 
 sapp_desc cab_sokol_main(int argc, char *argv[], 
-                         void (*init_cb)(Cab_Cabinet *),
-                         void (*update_cb)(Cab_Cabinet *)) {
+                         Cab_Cabinet *cabinet,
+                         void (*init_cb)(),
+                         void (*update_cb)()) {
     globals.init_cb = init_cb;
     globals.update_cb = update_cb;
 
